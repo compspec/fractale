@@ -28,26 +28,23 @@ fractale generate --cluster A spack /home/vanessa/Desktop/Code/spack
 This is the step where we want to say "Run gromacs on 2-4 nodes with these requirements." Since we haven't formalized a way to do that, I'm going to start with a flux jobspec, and then add attributes that can be used to search our subsystems. For example, I generated [software-gromacs.json](software-gromacs.json) with:
 
 ```bash
-flux submit --dry-run --setattr=requires.software=spack:gromacs gmx | jq
+flux submit --dry-run --setattr=requires.software=spack:curl gmx | jq
 ```
 
-Note that the important part of that is:
+Note that the important part of that (in yaml) is:
 
-```json
-  "attributes": {
-    "system": {
-      "requires": {
-        "software": "gromacs"
-      }
-    }
-  },
+```yaml
+requires:
+  software:
+    - name: curl
+      type: binary
 ```
 
-This is going to say "search subsystems that are of type software looking for gromacs." In practice, this looks for root nodes where the type is "software," which would be the case for spack or environment modules. This file can be json or yaml. Then we ask to satisfy. Either of these will work:
+This is a list of software requirements, where each entry can have multiple criteria, but all items in the list must match a software graph for it to pass. E.g., we can say a cluster subsystem requires _two_ matches (two different software libraries). This is going to say "search subsystems that are of type software looking for curl." In practice, this looks for root nodes where the type is "software," which would be the case for spack or environment modules. This file can be json or yaml. Then we ask to satisfy. Right now we are requiring that all items be under the same software subsystem (e.g., spack or environment modules) but we could change that. Either of these will work:
 
 ```bash
-fractale satisfy ./examples/fractale/software-gromacs.yaml
-fractale satisfy ./examples/fractale/software-gromacs.json
+fractale satisfy ./examples/fractale/software-curl.yaml
+fractale satisfy ./examples/fractale/software-curl.json
 ```
 
 By default, the above assumes subsystems located in the fractale home. If you want to adjust that, set `fractale --config-dir=<path> satisfy...` to adjust that (and note you will need to have generated the tree here. What we basically do with satisfy is build a database with tables for:

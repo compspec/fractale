@@ -14,7 +14,7 @@ We want to:
 1. Generate software graphs for some cluster (fluxion JGF) (this is done with [compspec](https://github.com/compspec/compspec)
 2. Register N clusters to a tool (should be written as a python module)
 3. Tool would have ability to select clusters from resources known, return
-4. Need graphical reprsentation (json) of each cluster - this will be used with the LLM inference
+4. Need graphical representation (json) of each cluster - this will be used with the LLM inference
 
 See [examples/fractale](examples/fractale) for a detailed walk-through of the above.
 

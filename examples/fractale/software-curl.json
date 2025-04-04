@@ -1,0 +1,40 @@
+{
+  "resources": [
+    {
+      "type": "slot",
+      "count": 1,
+      "with": [
+        {
+          "type": "core",
+          "count": 1
+        }
+      ],
+      "label": "task"
+    }
+  ],
+  "tasks": [
+    {
+      "command": [
+        "gmx"
+      ],
+      "slot": "task",
+      "count": {
+        "per_slot": 1
+      }
+    }
+  ],
+  "attributes": {
+    "system": {
+      "duration": 0,
+      "requires": {
+        "software": [
+           {
+              "name": "curl",
+              "type": "binary"
+           }
+        ]
+      }
+    }
+  },
+  "version": 1
+}

@@ -25,6 +25,11 @@ fractale generate --cluster A spack /home/vanessa/Desktop/Code/spack
 
 ## Satisfy Request
 
+Satisfy asks two questions:
+
+1. Which clusters have the subsystem resources that I need?
+2. Which clusters have the job resources that I need?
+
 This is the step where we want to say "Run gromacs on 2-4 nodes with these requirements." Since we haven't formalized a way to do that, I'm going to start with a flux jobspec, and then add attributes that can be used to search our subsystems. For example, I generated [software-gromacs.json](software-gromacs.json) with:
 
 ```bash

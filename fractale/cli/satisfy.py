@@ -3,7 +3,7 @@
 import sys
 
 from fractale.store import FractaleStore
-from fractale.subsystem import get_subsystem_registry
+from fractale.subsystem import get_subsystem_solver
 
 
 def main(args, extra, **kwargs):
@@ -12,6 +12,6 @@ def main(args, extra, **kwargs):
     This is a fairly simple (flat) check.
     """
     store = FractaleStore(args.config_dir)
-    registry = get_subsystem_registry(store.clusters_root)
-    is_satisfied = registry.satisfied(args.jobspec)
+    solver = get_subsystem_solver(store.clusters_root, args.backend)
+    is_satisfied = solver.satisfied(args.jobspec)
     sys.exit(0 if is_satisfied else -1)

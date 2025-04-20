@@ -8,6 +8,7 @@ from compspec.plugin.parser import plugin_registry
 from compspec.plugin.registry import PluginRegistry
 
 import fractale
+import fractale.defaults as defaults
 from fractale.logger import setup_logger
 
 # Generate the plugin registry to add parsers
@@ -80,6 +81,12 @@ def get_parser():
     )
     for cmd in [satisfy]:
         cmd.add_argument("jobspec", help="jobspec yaml or json file")
+        cmd.add_argument(
+            "--backend",
+            help="subsystem solved backend",
+            default=defaults.solver_backend_default,
+            choices=defaults.solver_backends,
+        )
 
     extractors = generate.add_subparsers(
         title="generate",

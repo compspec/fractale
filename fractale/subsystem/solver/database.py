@@ -1,6 +1,8 @@
+import copy
 import os
 import sqlite3
 
+import fractale.jobspec as jspec
 import fractale.subsystem.queries as queries
 import fractale.utils as utils
 from fractale.logger import LogColors, logger
@@ -9,12 +11,10 @@ from fractale.logger import LogColors, logger
 class DatabaseSolver:
     """
     A database solver solves for a cluster based on a simple database.
-
-    TODO: we need to have counters or another strategy for containment.
     """
 
     def __init__(self, path):
-        self.systems = {}
+        self.subsystems = {}
         self.conn = sqlite3.connect(":memory:")
         self.create_tables()
         self.load(path)
@@ -104,9 +104,18 @@ class DatabaseSolver:
         # self.conn.commit()
         attr_fields = '("cluster", "subsystem", "node", "name", "value")'
 
+        # Keep track of counts of all types
+        counts = {}
+
         # Now all attributes, and also include type because I'm lazy
         for nid, node in subsystem.iter_nodes():
             typ = node["metadata"]["type"]
+
+            # Assume a node is a count of 1
+            if typ not in counts:
+                counts[typ] = 0
+            counts[typ] += 1
+
             attr_values = f"('{subsystem.cluster}', '{subsystem.name}', '{nid}', 'type', '{typ}')"
             statement = f"INSERT INTO attributes {attr_fields} VALUES {attr_values}"
             cursor.execute(statement)
@@ -119,6 +128,7 @@ class DatabaseSolver:
 
         # Note that we aren't doing anything with edges currently.
         self.conn.commit()
+        self.subsystems[subsystem.name] = counts
 
     def get_subsystem_nodes(self, cluster, subsystem):
         """
@@ -196,6 +206,10 @@ class DatabaseSolver:
         if not requires:
             logger.exit("Jobspec has no system requirements.")
 
+        # Special case: containment - try matching resources if we have one
+        if "containment" in self.subsystems:
+            requires["containment"] = jspec.flatten_jobspec_resources(js)
+
         # These clusters will satisfy the request
         matches = set()
 
@@ -213,6 +227,12 @@ class DatabaseSolver:
             # that have matching attributes. Each here is a tuple, (name, cluster, type)
             for subsystem in subsystems:
                 name, cluster, subsystem_type = subsystem
+
+                # If subsystem is containment and we don't have enough totals, fail
+                if "containment" in self.subsystems:
+                    if not self.assess_containment(requires["containment"]):
+                        print(f"{LogColors.RED}=> No Matches due to containment{LogColors.ENDC}")
+                        return False
 
                 # "Get nodes in subsystem X" if we have a query syntax we could limit to a type, etc.
                 # In this case, the subsystem is the name (e.g., spack) since we might have multiple for
@@ -233,6 +253,19 @@ class DatabaseSolver:
             else:
                 print(f"{LogColors.RED}=> No Matches{LogColors.ENDC}")
             return False
+
+    def assess_containment(self, requires):
+        """
+        A rough heuirstic to see if the cluster has enough resources
+        of specific types.
+        """
+        for typ, count in requires.items():
+            if typ not in self.subsystems.get("containment", {}):
+                return False
+            have_count = self.subsystems["containment"][typ]
+            if have_count < count:
+                return False
+        return True
 
     def get_subsystem_by_type(self, subsystem_type, ignore_missing=True):
         """

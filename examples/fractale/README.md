@@ -72,4 +72,10 @@ And right now the search is just over attributes to find matching clusters. E.g.
 }
 ```
 
+Here is a jobspec that can't be satisfied because we ask for too many resources given the cluster [containment-subsystem.json]([containment-subsystem.json).
+
+```bash
+fractale satisfy ./examples/fractale/jobspec-containment-unsatisfied.yaml 
+```
+
 We likely want to have a more structured query syntax that can handle AND, OR, and other specifics. The actual search should remain general to support any generic key/value pair of attributes. My database structure and queries are also bad. 

@@ -40,6 +40,13 @@ class SubsystemSolver:
         """
         return self.backend.satisfied(jobspec)
 
+    def save(self, *args, **kwargs):
+        """
+        Save a graph (or similar graphical output).
+        If not implemented, we hit this.
+        """
+        self.backend.save(*args, **kwargs)
+
 
 class Subsystem:
     def __init__(self, filename):

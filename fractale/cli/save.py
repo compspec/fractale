@@ -8,10 +8,11 @@ from fractale.subsystem import get_subsystem_solver
 
 def main(args, extra, **kwargs):
     """
-    Determine if a jobspec can be satisfied by local resources.
-    This is a fairly simple (flat) check.
+    Save a cluster and subsystem graph.
     """
     store = FractaleStore(args.config_dir)
     solver = get_subsystem_solver(store.clusters_root, args.solver)
-    is_satisfied = solver.satisfied(args.jobspec)
-    sys.exit(0 if is_satisfied else -1)
+    outfile = args.out
+    if not outfile:
+        outfile = f"cluster-{args.cluster}-{args.subsystem}-{args.solver}.svg"
+    solver.save(args.cluster, args.subsystem, outfile)

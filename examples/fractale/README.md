@@ -28,7 +28,7 @@ fractale generate --cluster A spack /home/vanessa/Desktop/Code/spack
 Satisfy asks two questions:
 
 1. Which clusters have the subsystem resources that I need?
-2. Which clusters have the job resources that I need?
+2. Which clusters have the job resources that I need (containment subsystem)?
 
 This is the step where we want to say "Run gromacs on 2-4 nodes with these requirements." Since we haven't formalized a way to do that, I'm going to start with a flux jobspec, and then add attributes that can be used to search our subsystems. For example, I generated [software-gromacs.json](software-gromacs.json) with:
 
@@ -50,6 +50,40 @@ This is a list of software requirements, where each entry can have multiple crit
 ```bash
 fractale satisfy ./examples/fractale/software-curl.yaml
 fractale satisfy ./examples/fractale/software-curl.json
+```
+
+Try the graph backend, install [graph-tool](https://graph-tool.skewed.de/installation.html) then:
+
+```bash
+export PYTHONPATH=/home/vanessa/anaconda3/lib/python3.12/site-packages
+fractale satisfy --solver graph ./examples/fractale/software-curl.yaml
+fractale satisfy --solver graph ./examples/fractale/software-curl.json
+```
+```console
+=> 🍇 Loading cluster "a" subsystem "containment"
+=> 🍇 Loading cluster "a" subsystem "modules"
+=> 🍇 Loading cluster "a" subsystem "spack"
+    => Exploring cluster "a" containment subsystem
+          (1/1) satisfied resource core 
+Cluster "a" is a match
+```
+
+Here is for a nested slot:
+
+```bash
+fractale satisfy --solver graph ./examples/fractale/software-nested-slot.yaml 
+```
+```console
+=> 🍇 Loading cluster "a" subsystem "containment"
+=> 🍇 Loading cluster "a" subsystem "modules"
+=> 🍇 Loading cluster "a" subsystem "spack"
+    => Exploring cluster "a" containment subsystem
+          (1/1) satisfied resource socket 
+          (1/4) found resource core 
+          (2/4) found resource core 
+          (3/4) found resource core 
+          (4/4) satisfied resource core 
+Cluster "a" is a match
 ```
 
 By default, the above assumes subsystems located in the fractale home. If you want to adjust that, set `fractale --config-dir=<path> satisfy...` to adjust that (and note you will need to have generated the tree here. What we basically do with satisfy is build a database with tables for:
@@ -77,5 +111,27 @@ Here is a jobspec that can't be satisfied because we ask for too many resources 
 ```bash
 fractale satisfy ./examples/fractale/jobspec-containment-unsatisfied.yaml 
 ```
-
+```console
+=> 🍇 Loading cluster "a" subsystem "containment"
+=> 🍇 Loading cluster "a" subsystem "modules"
+=> 🍇 Loading cluster "a" subsystem "spack"
+       (2) SELECT * from subsystems WHERE type = 'software';
+=> No Matches due to containment
+```
 We likely want to have a more structured query syntax that can handle AND, OR, and other specifics. The actual search should remain general to support any generic key/value pair of attributes. My database structure and queries are also bad. 
+
+## Save
+
+We can save an image of our subystem for a cluster. E.g.,
+
+```bash
+$ fractale save a --out ./examples/fractale/cluster-a-containment.png
+```
+```console
+=> 🍇 Loading cluster "a" subsystem "containment"
+=> 🍇 Loading cluster "a" subsystem "modules"
+=> 🍇 Loading cluster "a" subsystem "spack"
+Saving to "./examples/fractale/cluster-a-containment.png"
+```
+
+<img src="./cluster-a-containment.svg">

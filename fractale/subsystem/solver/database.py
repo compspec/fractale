@@ -1,14 +1,13 @@
-import copy
 import os
 import sqlite3
 
-import fractale.jobspec as jspec
 import fractale.subsystem.queries as queries
-import fractale.utils as utils
 from fractale.logger import LogColors, logger
 
+from .base import Solver
 
-class DatabaseSolver:
+
+class DatabaseSolver(Solver):
     """
     A database solver solves for a cluster based on a simple database.
     """
@@ -49,21 +48,6 @@ class DatabaseSolver:
             cursor.execute(sql)
         self.conn.commit()
 
-    def load(self, path):
-        """
-        Load a group of subsystem files, typically json JGF.
-        """
-        from fractale.subsystem.subsystem import Subsystem
-
-        if not os.path.exists(path):
-            raise ValueError(f"User subsystem directory {path} does not exist.")
-        files = utils.recursive_find(path, "graph[.]json")
-        if not files:
-            raise ValueError(f"There are no cluster subsystems defined under root {path}")
-        for filename in files:
-            new_subsystem = Subsystem(filename)
-            self.load_subsystem(new_subsystem)
-
     def load_subsystem(self, subsystem):
         """
         Load a new subsystem to the memory database
@@ -89,19 +73,9 @@ class DatabaseSolver:
         # These are fields to insert a node and attributes
         node_fields = '("subsystem", "cluster", "label", "type", "basename", "name", "id")'
 
-        # First create all nodes.
-        # for nid, node in subsystem.graph["nodes"].items():
-        #    typ = node["metadata"]["type"]
-        #    basename = node["metadata"]["basename"]
-        #    name = node["metadata"]["name"]
-        #    id = node["metadata"]["id"]
-        #    node_values = f"('{subsystem.name}', '{subsystem.cluster}', '{nid}', '{typ}', '{basename}', '{name}', '{id}')"
-        #    statement = f"INSERT INTO nodes {node_fields} VALUES {node_values}"
-        #    logger.debug(statement)
-        #    cursor.execute(statement)
-
-        # Commit transaction
-        # self.conn.commit()
+        # NOTE: we don't create nodes here, e.g., iterate and parse into nodes table
+        # This would be subsystem.name, cluster name, nid, type basename, name
+        # Instead we just add attributes
         attr_fields = '("cluster", "subsystem", "node", "name", "value")'
 
         # Keep track of counts of all types
@@ -194,65 +168,6 @@ class DatabaseSolver:
         count = (f"{LogColors.PURPLE}({len(results)}){LogColors.ENDC} ").rjust(20)
         logger.info(count + printed)
         return results
-
-    def satisfied(self, jobspec):
-        """
-        Determine if a jobspec is satisfied by user-space subsystems.
-        """
-        # This handles json or yaml
-        js = utils.load_jobspec(jobspec)
-
-        requires = js["attributes"].get("system", {}).get("requires")
-        if not requires:
-            logger.exit("Jobspec has no system requirements.")
-
-        # Special case: containment - try matching resources if we have one
-        if "containment" in self.subsystems:
-            requires["containment"] = jspec.flatten_jobspec_resources(js)
-
-        # These clusters will satisfy the request
-        matches = set()
-
-        # We don't care about the association with tasks - the requires are matching clusters to entire jobs
-        # We could optimize this to be fewer queries, but it's likely trivial for now
-        for subsystem_type, items in requires.items():
-
-            # Get one or more matching subsystems (top level) for some number of clusters
-            # The subsystem type is like the category (e.g., software)
-            subsystems = self.get_subsystem_by_type(subsystem_type)
-            if not subsystems:
-                continue
-
-            # For each subsystem, since we don't have a query syntax developed, we just look for nodes
-            # that have matching attributes. Each here is a tuple, (name, cluster, type)
-            for subsystem in subsystems:
-                name, cluster, subsystem_type = subsystem
-
-                # If subsystem is containment and we don't have enough totals, fail
-                if "containment" in self.subsystems:
-                    if not self.assess_containment(requires["containment"]):
-                        print(f"{LogColors.RED}=> No Matches due to containment{LogColors.ENDC}")
-                        return False
-
-                # "Get nodes in subsystem X" if we have a query syntax we could limit to a type, etc.
-                # In this case, the subsystem is the name (e.g., spack) since we might have multiple for
-                # a type (e.g., software). This returns labels we can associate with attributes.
-                # labels = self.get_subsystem_nodes(cluster, name)
-
-                # "Get attribute key values associated with our search. This is done very stupidly now
-                nodes = self.find_nodes(cluster, name, items)
-                if not nodes:
-                    continue
-                matches.add((cluster, name))
-
-            if matches:
-                print(f"\n{LogColors.OKBLUE}({len(matches)}) Matches {LogColors.ENDC}")
-                for match in matches:
-                    print(f"cluster ({match[0]}) subsystem ({match[1]})")
-                return True
-            else:
-                print(f"{LogColors.RED}=> No Matches{LogColors.ENDC}")
-            return False
 
     def assess_containment(self, requires):
         """

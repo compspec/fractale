@@ -72,6 +72,16 @@ def get_parser():
     generate.add_argument("-c", "--cluster", help="cluster name")
 
     # run.add_argument("-t", "--transform", help="transformer to use", default="flux")
+    save = subparsers.add_parser(
+        "save",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="save a picture of a subsystem graph",
+    )
+    save.add_argument("cluster", help="cluster to save")
+    save.add_argument(
+        "--subsystem", help="cluster to save (defaults to containment)", default="containment"
+    )
+    save.add_argument("--out", help="output file name")
 
     # This does just the user space subsystem match
     satisfy = subparsers.add_parser(
@@ -79,10 +89,10 @@ def get_parser():
         formatter_class=argparse.RawTextHelpFormatter,
         description="determine clusters that satisfy a jobspec based on user subsystems",
     )
-    for cmd in [satisfy]:
-        cmd.add_argument("jobspec", help="jobspec yaml or json file")
+    satisfy.add_argument("jobspec", help="jobspec yaml or json file")
+    for cmd in [satisfy, save]:
         cmd.add_argument(
-            "--backend",
+            "--solver",
             help="subsystem solved backend",
             default=defaults.solver_backend_default,
             choices=defaults.solver_backends,
@@ -138,6 +148,8 @@ def run_fractale():
         from .generate_subsystem import main
     elif args.command == "satisfy":
         from .satisfy import main
+    elif args.command == "save":
+        from .save import main
     else:
         help(1)
     global registry

@@ -18,6 +18,18 @@ We want to:
 
 See [examples/fractale](examples/fractale) for a detailed walk-through of the above.
 
+For graph tool:
+
+```bash
+conda install -c conda-forge graph-tool
+```
+
+## Questions
+
+- Should other subsystem types have edges? How used?
+- Should we try to map them to nodes in the graph or use another means (or assume global across cluster nodes as we do now)?
+- Can we simplify spack subsystem graph (it's really big...)
+
 <!-- ⭐️ [Documentation](https://compspec.github.io/fractale) ⭐️ -->
 
 ## License

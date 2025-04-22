@@ -18,8 +18,6 @@ class SubsystemSolver:
     """
 
     def __init__(self, path, backend="database"):
-        self.systems = {}
-        # database, or graph
         self.load_solver(backend, path)
 
     def load_solver(self, backend, path):
@@ -34,11 +32,17 @@ class SubsystemSolver:
         # The subsystem registr
         self.backend = solvers.load_solver(backend, path)
 
-    def satisfied(self, jobspec):
+    def render(self, subsystems):
+        """
+        Render lines for some subsystem result
+        """
+        return self.backend.render(subsystems)
+
+    def satisfied(self, jobspec, return_results=False):
         """
         Determine if a jobspec is satisfied by user-space subsystems.
         """
-        return self.backend.satisfied(jobspec)
+        return self.backend.satisfied(jobspec, return_results)
 
     def save(self, *args, **kwargs):
         """
@@ -56,6 +60,10 @@ class Subsystem:
         # Keep track of total counts of things as a quick proxy
         self.counts = {}
         self.load(filename)
+
+    @property
+    def metadata(self):
+        return self.data["metadata"]
 
     @property
     def type(self):

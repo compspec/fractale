@@ -1,8 +1,10 @@
+import json
 import os
 
 import fractale.jobspec as jspec
 import fractale.utils as utils
 from fractale.logger import LogColors, logger
+from fractale.subsystem.match import MatchSet
 
 
 class Solver:
@@ -32,14 +34,20 @@ class Solver:
         requires["containment"] = jspec.flatten_jobspec_resources(js)
         return requires
 
-    def satisfied(self, jobspec):
+    def render(self, subsystems):
+        """
+        Take in a set of cluster matches and
+        """
+        return []
+
+    def satisfied(self, jobspec, return_results=False):
         """
         Determine if a jobspec is satisfied by user-space subsystems.
         """
         requires = self.prepare_requirements(jobspec)
 
         # These clusters will satisfy the request
-        matches = set()
+        matches = MatchSet()
 
         # We don't care about the association with tasks - the requires are matching clusters to entire jobs
         # We could optimize this to be fewer queries, but it's likely trivial for now
@@ -71,12 +79,15 @@ class Solver:
                 nodes = self.find_nodes(cluster, name, items)
                 if not nodes:
                     continue
-                matches.add((cluster, name))
+                # This is adding cluster, subsystem name, match criteria, and node ids
+                matches.add(cluster, name, items, nodes)
 
             if matches:
-                print(f"\n{LogColors.OKBLUE}({len(matches)}) Matches {LogColors.ENDC}")
-                for match in matches:
-                    print(f"cluster ({match[0]}) subsystem ({match[1]})")
+                print(f"\n{LogColors.OKBLUE}({matches.count}) Matches {LogColors.ENDC}")
+                for match in matches.iterset():
+                    print(f"cluster ({match.cluster}) subsystem ({match.subsystem})")
+                if return_results:
+                    return matches
                 return True
             else:
                 print(f"{LogColors.RED}=> No Matches{LogColors.ENDC}")
@@ -85,8 +96,13 @@ class Solver:
     def load(self, path):
         """
         Load a group of subsystem files, typically json JGF.
+
+        We also are careful to store metadata here that might be needed for
+        rendering.
         """
         from fractale.subsystem.subsystem import Subsystem
+
+        self.metadata = {}
 
         if not os.path.exists(path):
             raise ValueError(f"User subsystem directory {path} does not exist.")
@@ -96,3 +112,4 @@ class Solver:
         for filename in files:
             new_subsystem = Subsystem(filename)
             self.load_subsystem(new_subsystem)
+            self.metadata[new_subsystem.name] = new_subsystem.metadata

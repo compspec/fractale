@@ -18,6 +18,8 @@ INSTALL_REQUIRES = (
     ("compspec", {"min_version": None}),
     ("compspec-spack", {"min_version": None}),
     ("compspec-modules", {"min_version": None}),
+    # Yeah, probably overkill, just being used for printing the scripts
+    ("rich", {"min_version": None}),
 )
 
 TESTS_REQUIRES = (("pytest", {"min_version": "4.6.2"}),)

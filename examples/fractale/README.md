@@ -120,6 +120,45 @@ fractale satisfy ./examples/fractale/jobspec-containment-unsatisfied.yaml
 ```
 We likely want to have a more structured query syntax that can handle AND, OR, and other specifics. The actual search should remain general to support any generic key/value pair of attributes. My database structure and queries are also bad. 
 
+## Script Request
+
+A script request is going to:
+
+```console
+=> 1. take input (right now jobspec) "what clusters can satisfy this request?
+=> 2. subsystem solver "these clusters can"
+=> 3. selection plugin (defaults to random) "how many and how do you want to choose from this set?"
+=> 4. I have chosen N, transform them appropriately to submit
+=> 5. render the matches based on the subsystem
+```
+
+Right now we have this done rather manually, and the idea is that an LLM can eventually more elegantly do it. 
+Here is an example.
+
+```bash
+$ fractale script ./examples/fractale/software-curl.yaml
+```
+```console
+=> 🍇 Loading cluster "a" subsystem "containment"
+=> 🍇 Loading cluster "a" subsystem "modules"
+=> 🍇 Loading cluster "a" subsystem "spack"
+    => Exploring cluster "a" containment subsystem
+          (1/1) satisfied resource core 
+Cluster "a" is a match
+{
+│   'version': 1,
+│   'resources': [{'type': 'slot', 'count': 1, 'with': [{'type': 'core', 'count': 1}], 'label': 'task'}],
+│   'tasks': [{'command': ['gmx'], 'slot': 'task', 'count': {'per_slot': 1}}],
+│   'attributes': {
+│   │   'system': {
+│   │   │   'duration': 0,
+│   │   │   'requires': {'software': [{'name': 'curl', 'type': 'binary'}]},
+│   │   │   'files': {'batch-script': {'mode': 33216, 'data': '#!/bin/bash\n\nspack load curl\ngmx', 'encoding': 'utf-8'}}
+│   │   }
+│   }
+}
+```
+
 ## Save
 
 We can save an image of our subystem for a cluster. E.g.,

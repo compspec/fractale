@@ -117,6 +117,27 @@ class DatabaseSolver(Solver):
         labels = self.query(statement)
         return [f"'{x[0]}'" for x in labels]
 
+    def render(self, subsystems):
+        """
+        Yield lines for the transformer.
+        """
+        for subsystem, items in subsystems.items():
+            for item in items:
+                # This is actually easier to do than a query!
+                if subsystem == "spack":
+                    for require in item.requires:
+                        item_type = require.get("type")
+                        item_name = require.get("name")
+                        if item_type == "binary" and item_name is not None:
+                            yield f"\nspack load {item_name}"
+
+                        elif subsystem == "environment-modules":
+                            item_type = require.get("type")
+                            # TODO we need to test if this will with with <.>
+                            item_name = require.get("attribute.name")
+                            if item_type == "module" and item_name is not None:
+                                yield f"\nmodule load {item_name}"
+
     def find_nodes(self, cluster, name, items):
         """
         Given a list of node labels, find children (attributes)

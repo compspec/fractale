@@ -89,8 +89,22 @@ def get_parser():
         formatter_class=argparse.RawTextHelpFormatter,
         description="determine clusters that satisfy a jobspec based on user subsystems",
     )
-    satisfy.add_argument("jobspec", help="jobspec yaml or json file")
-    for cmd in [satisfy, save]:
+    # Generate a jobspec script
+    script = subparsers.add_parser(
+        "script",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="generate a batch script after satisfy",
+    )
+    script.add_argument(
+        "--selector", help="selection algorithm to use", default="random", choices=["random"]
+    )
+    script.add_argument(
+        "--transformer", help="transformer to use", default="flux", choices=["flux"]
+    )
+    for cmd in [satisfy, script]:
+        cmd.add_argument("jobspec", help="jobspec yaml or json file")
+
+    for cmd in [satisfy, save, script]:
         cmd.add_argument(
             "--solver",
             help="subsystem solved backend",
@@ -148,6 +162,8 @@ def run_fractale():
         from .generate_subsystem import main
     elif args.command == "satisfy":
         from .satisfy import main
+    elif args.command == "script":
+        from .script import main
     elif args.command == "save":
         from .save import main
     else:

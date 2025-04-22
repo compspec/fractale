@@ -2,6 +2,7 @@ import graph_tool.all as gt
 
 import fractale.jobspec as jspec
 from fractale.logger import LogColors
+from fractale.subsystem.match import MatchSet
 
 from .base import Solver
 
@@ -25,6 +26,7 @@ class GraphSolver(Solver):
     def __init__(self, path):
         self.subsystems = {}
         self.clusters = set()
+        self.vertices = {}
         self.create_graph()
         self.load(path)
 
@@ -70,6 +72,9 @@ class GraphSolver(Solver):
             # Flux containment has an id at the top level, compspec uses id in metadata
             node_id = node.get("id") or node["metadata"]["id"]
 
+            # This needs to be a lookup across subsystems
+            global_id = f"{subsystem.cluster}-{subsystem.name}-{node_id}"
+
             # Update all properties
             props["cluster"][node_v] = subsystem.cluster
             props["subsystem"][node_v] = subsystem.name
@@ -77,7 +82,7 @@ class GraphSolver(Solver):
             props["type"][node_v] = typ
             props["name"][node_v] = node["metadata"]["name"]
             props["basename"][node_v] = node["metadata"]["basename"]
-            props["id"][node_v] = node_id
+            props["id"][node_v] = global_id
 
             # Add attributes, arbitrary key value pair metadata
             # TODO, choose property type based on Python type?
@@ -88,6 +93,7 @@ class GraphSolver(Solver):
 
             # Add the node to the lookup
             node_lookup[node_id] = node_v
+            self.vertices[global_id] = node_v
 
             if typ not in counts:
                 counts[typ] = 0
@@ -125,7 +131,7 @@ class GraphSolver(Solver):
         print(f'{LogColors.OKBLUE}Saving to "{outpath}"{LogColors.ENDC}')
         gt.graph_draw(view, output=outpath, fmt=fmt)
 
-    def satisfied(self, jobspec):
+    def satisfied(self, jobspec, return_results=False):
         """
         Determine if a jobspec is satisfied by user-space subsystems.
         """
@@ -133,9 +139,9 @@ class GraphSolver(Solver):
 
         # First get cluster contenders based on subsystem requirements
         # Note we are passing in a list so we get it back :)
-        is_satisfied, contenders = self.check_subsystem_satisfies(requires)
+        is_satisfied, matches = self.check_subsystem_satisfies(requires)
         if not is_satisfied:
-            return is_satisfied
+            return MatchSet()
 
         # Extract slot resources
         # Flux jobspecs should only have one slot (there is only one task allowed).
@@ -144,19 +150,19 @@ class GraphSolver(Solver):
             raise ValueError("Did not find slot in jobspec.")
         slot = slot[0]
 
-        # Keep track of matching clusters
-        matches = set()
-
         # Now we do graph stuff. Let's create a graph view that just includes the clusters
         # This will be greedy - we will stop when we find the first match
-        for cluster in contenders:
+        for cluster in matches.clusters:
             if self.check_cluster_satisfies(cluster, slot):
                 print(f'{LogColors.OKBLUE}Cluster "{cluster}" is a match{LogColors.ENDC}')
-                matches.add(cluster)
+            else:
+                matches.remove(cluster)
 
-        if not matches:
+        if matches.count == 0:
             print(f"{LogColors.RED}=> No Matches{LogColors.ENDC}")
             return False
+        if return_results:
+            return matches
         return True
 
     def check_cluster_satisfies(self, cluster, slot):
@@ -286,19 +292,54 @@ class GraphSolver(Solver):
         # We should not get here
         return False
 
+    def render(self, subsystems):
+        """
+        Yield lines for the transformer.
+        """
+        for subsystem, items in subsystems.items():
+            for item in items:
+
+                # Spack needs a spack load. The "right" way to do this would be
+                # to get the initial node back from the solver. But I'm too lazy
+                # right now for that, especially if this is just a demo
+                for v_id in item.details:
+                    v = self.vertices[v_id]
+                    item_type = self.g.vp["type"][v]
+                    item_name = self.g.vp["name"][v]
+
+                    # Spack template
+                    if subsystem == "spack" and item_type == "package" and item_name is not None:
+                        yield f"\nspack load {item_name}"
+
+                    # Environment modules template
+                    elif (
+                        subsystem == "environment-modules"
+                        and item_type == "module"
+                        and item_name is not None
+                    ):
+                        yield f"\nmodule load {item_name}"
+
     def check_subsystem_satisfies(self, requires):
         """
         Determine if subsystems (that are not containment) are satisfied. Unlike a graph
         traversal, since this is based on properties we are doing dumb loop queries.
         Dumb programmer, dumb algorithms, what can I say.
         """
+        # Keep track of matching clusters. For this strategy, since we evaluate valuesets for each
+        # subsystem, we can only consider a requirement fully satisfied when all valuesets are.
+        matches = MatchSet()
         contenders = None
 
         # Subsystem requirements first
+        # Note that these subsystems aren't like spack, modules, etc., they are "software" and more general.
         for subsystem, values in requires.items():
             if subsystem == "containment":
                 continue
 
+            # We need to keep track of vertices satisfied (for each valueset)
+            satisfied_sets = []
+
+            # Keep track of solutions to send back
             # Each valueset is a set of requirements for a node - we assume number is small
             # All requirements (multiple subsystems, for example) must be met for a single cluster.
             for valueset in values:
@@ -317,7 +358,7 @@ class GraphSolver(Solver):
                         print(
                             f'{LogColors.RED}=> No Matches due to unknown property "{key}{LogColors.ENDC}"'
                         )
-                        return False, contenders
+                        return False, matches
 
                     # Do we have matching vertices anywhere in the graph?
                     vertices = gt.find_vertex(self.g, v_prop, value)
@@ -325,7 +366,7 @@ class GraphSolver(Solver):
                         print(
                             f'{LogColors.RED}=> No Matches due to missing requirement "{key}={value}"{LogColors.ENDC}'
                         )
-                        return False, contenders
+                        return False, matches
 
                     # If we get here, we have vertices. We need to consider vertex and cluster overlap
                     if vertices_satisfied is None:
@@ -336,7 +377,7 @@ class GraphSolver(Solver):
                             print(
                                 f"{LogColors.RED}=> No Matches due to missing requirement {key}={value}{LogColors.ENDC}"
                             )
-                            return False, contenders
+                            return False, matches
 
                         # If we get here, there was an intersection, so add it
                         [
@@ -351,8 +392,9 @@ class GraphSolver(Solver):
                             self.g.vertex_properties["cluster"][v] for v in vertices_satisfied
                         }
 
-                    # If we already have contenders, not having a contender in our current set means we can
-                    # no longer consider the cluster - there is a requirement not satisfied
+                    # If we already have contenders:
+                    # 1. Overlap means common nodes (are match vertices are still good)
+                    # 2. No overlap - we can't consider cluster because there is a requirement not satisfied
                     else:
                         new_contenders = {
                             self.g.vertex_properties["cluster"][v] for v in vertices_satisfied
@@ -361,14 +403,26 @@ class GraphSolver(Solver):
                             print(
                                 f"{LogColors.RED}=> No Matches due to no cluster overlap for {valueset}{LogColors.ENDC}"
                             )
-                            return False, contenders
+                            return False, matches
+
+                        # If we get here, we still have contender clusters
                         [contenders.add(c) for c in contenders.intersection(new_contenders)]
+                        satisfied_sets.append([valueset, vertices_satisfied])
+
+            # If we make it here, we've satisfied all valuesets for a subsystem
+            for satisfied_set in satisfied_sets:
+                items = []
+                for v in satisfied_set[1]:
+                    items.append(self.g.vp["id"][v])
+                # This is adding cluster, subsystem, valueset, and a list of vertex id
+                matches.add(
+                    self.g.vp["cluster"][v], self.g.vp["subsystem"][v], satisfied_set[0], items
+                )
 
         # One final check
-        if not contenders:
+        if matches.count == 0:
             print(
                 f"{LogColors.RED}=> No Matches for any cluster for subsystem requirements{LogColors.ENDC}"
             )
             return False, contenders
-
-        return True, contenders
+        return True, matches

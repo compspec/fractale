@@ -2,6 +2,7 @@ import copy
 import json
 
 from fractale.logger import LogColors
+from fractale.logger.generate import JobNamer
 from fractale.transformer.base import TransformerBase
 
 
@@ -17,6 +18,7 @@ class FluxWorkload(TransformerBase):
         """
         Parse the jobspec into tasks for flux.
         """
+        namer = JobNamer()
         # Here we want to group by cluster
         # We need to artificially parse the match metadata
         # This is handled by the solver, because each solver can
@@ -41,8 +43,12 @@ class FluxWorkload(TransformerBase):
 
             # I'm going to be careful about updating files
             files = jobspec["attributes"]["system"].get("files") or {}
-            files["batch-script"] = data
+
+            # Generate a name for the script
+            script_name = namer.generate() + ".sh"
+            files[script_name] = data
             jobspec["attributes"]["system"]["files"] = files
+            jobspec["tasks"][0]["command"] = ["/bin/bash", f"./{script_name}"]
             yield jobspec
 
     @property

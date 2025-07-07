@@ -4,6 +4,7 @@ import json
 from fractale.logger import LogColors
 from fractale.logger.generate import JobNamer
 from fractale.transformer.base import TransformerBase
+from fractale.transformer.flux.validate import Validator
 
 
 class FluxWorkload(TransformerBase):
@@ -13,6 +14,16 @@ class FluxWorkload(TransformerBase):
     parsing the subsystems in a sort of manual way. This a filler,
     and assuming that we will have an LLM that can replace this.
     """
+
+    def parse(self, jobspec):
+        """
+        Parse an (expected) Flux jobspec. Right now we assume it is from
+        the user, so it is a Flux batch script.
+        """
+        validator = Validator("batch")
+
+        # This is a parsed (normalized) JobSpec
+        return validator.parse(jobspec)
 
     def run(self, matches, jobspec):
         """

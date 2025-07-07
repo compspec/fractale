@@ -174,3 +174,8 @@ Saving to "./examples/fractale/cluster-a-containment.png"
 ```
 
 <img src="./cluster-a-containment.svg">
+
+
+## Transform
+
+This mirrors the previous transform functionality for the jobspec library. It's a simple conversion, and no LLMs needed.

@@ -71,6 +71,29 @@ def get_parser():
     )
     generate.add_argument("-c", "--cluster", help="cluster name")
 
+    # Transform jobspecs from flux to Kubernetes (starting specific)
+    transform = subparsers.add_parser(
+        "transform",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="transform a jobspec",
+    )
+    transform.add_argument(
+        "-t",
+        "--to",
+        dest="to_transformer",
+        help="transform into this jobspec",
+        default="kubernetes",
+    )
+    transform.add_argument(
+        "-f", "--from", dest="from_transformer", help="transform from this jobspec", default="flux"
+    )
+    transform.add_argument(
+        "--pretty",
+        help="pretty print in the terminal",
+        default=False,
+        action="store_true",
+    )
+
     # run.add_argument("-t", "--transform", help="transformer to use", default="flux")
     save = subparsers.add_parser(
         "save",
@@ -101,7 +124,7 @@ def get_parser():
     script.add_argument(
         "--transformer", help="transformer to use", default="flux", choices=["flux"]
     )
-    for cmd in [satisfy, script]:
+    for cmd in [satisfy, script, transform]:
         cmd.add_argument("jobspec", help="jobspec yaml or json file")
 
     for cmd in [satisfy, save, script]:
@@ -166,6 +189,8 @@ def run_fractale():
         from .script import main
     elif args.command == "save":
         from .save import main
+    elif args.command == "transform":
+        from .transform import main
     else:
         help(1)
     global registry

@@ -9,6 +9,14 @@ This library is primarily being used for development for the descriptive thrust 
 
 ## Design
 
+### Simple
+
+We provide a simple translation layer between job specifications. We take the assumption that although each manager has many options, the actual options a user would use is a much smaller set, and it's relatively straight forward to translate (and have better accuracy).
+
+See [examples/transform](examples/transform) for an example.
+
+### Complex
+
 We want to:
 
 1. Generate software graphs for some cluster (fluxion JGF) (this is done with [compspec](https://github.com/compspec/compspec)

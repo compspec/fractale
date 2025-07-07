@@ -21,6 +21,18 @@ class TransformerBase:
         self.selector = get_selector(selector)
         self.solver = solver
 
+    def parse(self, *args, **kwargs):
+        """
+        Parse converts the native jobspec to the standard JobSpec
+        """
+        raise NotImplementedError
+
+    def convert(self, *args, **kwargs):
+        """
+        Convert a normalized jobspec to the format here.
+        """
+        raise NotImplementedError
+
     def render(self, matches, jobspec):
         """
         Run the transformer:

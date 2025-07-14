@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 
-import argparse
-import os
 import re
-import sys
 
 import yaml
 
 from fractale.logger.generate import JobNamer
 from fractale.transformer.base import TransformerBase
+from fractale.transformer.common import JobSpec
 
 # Assume GPUs are NVIDIA
 gpu_resource_name = "nvidia.com/gpu"
@@ -37,6 +35,31 @@ def normalize_memory_request(mem_str):
 
     # Assume other formats (like Gi, Mi, K, Ki) are already correct
     return mem_str
+
+
+def parse_memory(self, mem_str: str) -> str:
+    """
+    Converts K8s memory (e.g., 1Gi) to JobSpec format (e.g., 1G).
+    """
+    if not mem_str:
+        return None
+    mem_str = mem_str.upper()
+    if mem_str.endswith("GI"):
+        return mem_str.replace("GI", "G")
+    if mem_str.endswith("MI"):
+        return mem_str.replace("MI", "M")
+    if mem_str.endswith("KI"):
+        return mem_str.replace("KI", "K")
+    return mem_str
+
+
+def parse_cpu(self, cpu_str: str) -> int:
+    """
+    Converts K8s CPU string to an integer. Assumes no millicores.
+    """
+    if not cpu_str:
+        return 1
+    return int(cpu_str)
 
 
 def get_resources(spec):
@@ -68,10 +91,8 @@ def get_resources(spec):
 
 class KubernetesTransformer(TransformerBase):
     """
-    A Flux Transformer is a very manual way to transform a subsystem into
-    a batch script. I am not even using jinja templates, I'm just
-    parsing the subsystems in a sort of manual way. This a filler,
-    and assuming that we will have an LLM that can replace this.
+    A Kubernetes Transformer is a very manual transformation to convert
+    a standard JobSpec to a Kubernetes Job.
     """
 
     def convert(self, spec):
@@ -159,3 +180,72 @@ class KubernetesTransformer(TransformerBase):
             job["metadata"].setdefault("labels", {})
             job["metadata"]["labels"]["account"] = spec.account
         return job
+
+    def parse(self, job_manifest):
+        """
+        Parses a Kubernetes Job manifest (dict or YAML string) into a JobSpec.
+        """
+        if isinstance(job_manifest, str):
+            manifest = yaml.safe_load(job_manifest)
+        else:
+            manifest = job_manifest
+
+        spec = JobSpec()
+
+        # Metadata
+        metadata = manifest.get("metadata", {})
+        spec.job_name = metadata.get("name")
+        spec.account = metadata.get("labels", {}).get("account")
+
+        # Job Spec and template
+        job_spec = manifest.get("spec", {})
+        spec.num_nodes = job_spec.get("parallelism", 1)
+        spec.wall_time = job_spec.get("activeDeadlineSeconds")
+        pod_template = job_spec.get("template", {})
+        pod_spec = pod_template.get("spec", {})
+
+        if not pod_spec.get("containers"):
+            raise ValueError("Kubernetes manifest has no containers to parse.")
+
+        containers = pod_spec["containers"]
+        if len(containers) > 1:
+            print("Warning: job has >1 container, will use first.")
+
+        container = containers[0]
+        spec.container_image = container.get("image")
+        spec.executable = container.get("command")
+        spec.arguments = container.get("args", [])
+        spec.working_directory = container.get("workingDir")
+
+        # Environment
+        env_list = container.get("env", [])
+        if env_list:
+            spec.environment = {item["name"]: item["value"] for item in env_list}
+
+        # Resources
+        resources = container.get("resources", {})
+        limits = resources.get("limits", {})
+        requests = resources.get("requests", {})
+
+        if gpu_resource_name in limits:
+            spec.gpus_per_task = int(limits[gpu_resource_name])
+
+        if "memory" in requests:
+            spec.mem_per_task = parse_memory(requests["memory"])
+
+        if "cpu" in requests:
+            cpu_val = parse_cpu(requests["cpu"])
+            # convert uses num_tasks for the CPU request
+            # if it's > 1, otherwise it uses cpus_per_task. We map it back to num_tasks.
+            spec.num_tasks = cpu_val
+            if cpu_val == 1:
+                spec.cpus_per_task = 1
+
+        # Scheduling
+        if pod_spec.get("priorityClassName"):
+            try:
+                spec.priority = int(pod_spec.get("priorityClassName"))
+            except (ValueError, TypeError):
+                spec.priority = None  # Ignore if not a valid integer string
+
+        return spec

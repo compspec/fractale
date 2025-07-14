@@ -3,12 +3,14 @@
 This is an example of doing a transformation between types. We do a simple mapping of parameters.
 To start testing, we will assume one node runs, and of the equivalent container. This way we can create a Job in Kubernetes without considering MPI networking.
 
+## Flux to Kubernetes
+
 ```bash
 # Print pretty
-fractale transform --to kubernetes --from flux ./flux_batch.sh --pretty
+fractale transform --to kubernetes --from flux ./flux-batch.sh --pretty
 
 # Print as raw yaml (to pipe to file)
-fractale transform --to kubernetes --from flux ./flux_batch.sh
+fractale transform --to kubernetes --from flux ./flux-batch.sh
 ```
 ```console
 apiVersion: batch/v1
@@ -47,4 +49,11 @@ spec:
                 requests:
                   cpu: '64'
             restartPolicy: Never
+```
+
+## Flux to Slurm
+
+```bash
+fractale transform --to slurm --from flux ./flux-batch.sh --pretty
+fractale transform --to slurm --from flux ./flux-batch.sh
 ```

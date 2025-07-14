@@ -1,9 +1,11 @@
 from .flux import Transformer as FluxTransformer
 from .kubernetes import Transformer as KubernetesTransformer
+from .slurm import Transformer as SlurmTransformer
 
 plugins = {
     "kubernetes": KubernetesTransformer,
     "flux": FluxTransformer,
+    "slurm": SlurmTransformer,
 }
 
 

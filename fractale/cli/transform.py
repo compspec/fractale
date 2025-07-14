@@ -4,6 +4,7 @@ import os
 import sys
 
 import yaml
+from rich import print
 from rich.pretty import pprint
 
 from fractale.transformer import get_transformer
@@ -25,7 +26,9 @@ def main(args, extra, **kwargs):
     normalized_jobspec = from_transformer.parse(args.jobspec)
     final_jobspec = to_transformer.convert(normalized_jobspec)
 
-    if args.pretty:
+    if args.pretty and args.to_transformer in ["slurm"]:
+        print(final_jobspec)
+    elif args.pretty:
         pprint(final_jobspec, indent_guides=True)
     elif args.to_transformer in ["kubernetes"]:
         yaml.dump(final_jobspec, sys.stdout, sort_keys=True, default_flow_style=False)

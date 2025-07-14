@@ -1,7 +1,3 @@
-import copy
-import json
-
-from fractale.logger import LogColors
 from fractale.logger.generate import JobNamer
 from fractale.transformer.base import TransformerBase
 from fractale.transformer.flux.validate import Validator
@@ -34,7 +30,7 @@ class FluxWorkload(TransformerBase):
         # We need to artificially parse the match metadata
         # This is handled by the solver, because each solver can
         # hold and represent metadata differently.
-        for cluster, subsystems in matches.matches.items():
+        for _, subsystems in matches.matches.items():
 
             # There are two strategies we could take here. To update the flux
             # jobscript to have a batch script (more hardened, but doesn't

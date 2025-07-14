@@ -34,12 +34,12 @@ class JobSpec:
     gpus_per_task: int = 0
 
     # Scheduling and Constraints
-    wall_time: Optional[str] = None
+    wall_time: Optional[int] = None
     queue: Optional[str] = None
     priority: Optional[int] = None
     exclusive_access: bool = False
     constraints: List[str] = field(default_factory=list)
-    begin_time: Optional[str] = None
+    begin_time: Optional[int] = None
 
     # Environment and I/O
     environment: Dict[str, str] = field(default_factory=dict)

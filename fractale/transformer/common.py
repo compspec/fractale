@@ -47,5 +47,6 @@ class JobSpec:
     output_file: Optional[str] = None
     error_file: Optional[str] = None
 
-    # Dependencies
+    # Dependencies and script
     depends_on: Optional[Union[str, List[str]]] = None
+    script: List[str] = field(default_factory=list)

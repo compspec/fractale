@@ -1,3 +1,3 @@
-from .workload import FluxWorkload as Transformer
+from .transform import FluxTransformer as Transformer
 
 assert Transformer

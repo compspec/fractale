@@ -68,11 +68,15 @@ class Validator(BatchCmd):
         string_io.close()
         return batchscript, changes
 
-    def parse(self, filename):
+    def unhandled(self, filename):
+        return self.parse(filename, return_unhandled=True)
+
+    def parse(self, filename, return_unhandled=False):
         """
         Validate and parse, yielding back arguments.
         """
         content = utils.read_file(filename)
+        not_handled = set()
 
         # Changes are removed lines to get it to read
         batchscript, changes = self.get_directive_parser(content)
@@ -96,14 +100,16 @@ class Validator(BatchCmd):
                 if item.action == "SETARGS":
                     # This should only be one value, but don't assume
                     for key, value in self.parse_argument_delta(item.args):
-                        js = self.update_jobspec(js, key, value)
+                        js = self.update_jobspec(js, key, value, not_handled)
 
             except Exception:
                 name = " ".join(item.args)
                 raise ValueError(f"validation failed at {name} line {item.lineno}")
+        if return_unhandled:
+            return not_handled
         return js
 
-    def update_jobspec(self, js, key, value):
+    def update_jobspec(self, js, key, value, unhandled):
         """
         Direct mapping of a key from parsed Flux command line into standard
         """
@@ -159,7 +165,8 @@ class Validator(BatchCmd):
             js.depends_on += value
         else:
             print(f"Warning: not handled: {key}={value}")
-        return js
+            unhandled.add(key)
+        return js, unhandled
 
     def parse_argument_delta(self, args):
         """

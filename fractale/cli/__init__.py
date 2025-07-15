@@ -85,7 +85,10 @@ def get_parser():
         default="kubernetes",
     )
     transform.add_argument(
-        "-f", "--from", dest="from_transformer", help="transform from this jobspec", default="flux"
+        "-f",
+        "--from",
+        dest="from_transformer",
+        help="transform from this jobspec",
     )
     transform.add_argument(
         "--pretty",

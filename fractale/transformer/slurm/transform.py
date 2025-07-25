@@ -177,11 +177,19 @@ class SlurmTransformer(TransformerBase):
         # I/O
         script.add("output", spec.output_file)
         script.add("error", spec.error_file)
+        if spec.mail_user:
+            script.add("mail-user", spec.mail_user)
+            mail_type_str = ",".join(spec.mail_type) if spec.mail_type else "ALL"
+            script.add("mail-type", mail_type_str)
 
         # Resource Requests
         script.add("nodes", spec.num_nodes)
         script.add("ntasks", spec.num_tasks)
         script.add("cpus-per-task", spec.cpus_per_task)
+        if spec.gpus_per_task and spec.gpus_per_task > 0:
+            script.add("gpus-per-task", spec.gpus_per_task)
+        elif spec.generic_resources:
+            script.add("gres", spec.generic_resources)
 
         # Slurm's --mem-per-cpu I think is how to specify memory per task
         if spec.mem_per_task:
@@ -189,8 +197,6 @@ class SlurmTransformer(TransformerBase):
                 script.add("mem", spec.mem_per_task)
             else:
                 script.add("mem-per-cpu", spec.mem_per_task)
-        if spec.gpus_per_task > 0:
-            script.add("gpus-per-task", spec.gpus_per_task)
 
         # Scheduling and Constraints
         script.add("time", seconds_to_slurm_time(spec.wall_time))
@@ -198,9 +204,16 @@ class SlurmTransformer(TransformerBase):
 
         # The 'nice' value in Slurm influences the job's priority.
         # A higher value means lower priority. This is an imperfect mapping.
-        nice_val = priority_to_nice(spec.priority)
-        if nice_val != 0:
-            script.add("nice", nice_val)
+        # We also support qos and priority directly, but `nice` is a fallback.
+        if spec.priority:
+            if isinstance(spec.priority, str):
+                # Assumes priority string is a QoS name
+                script.add("qos", spec.priority)
+            elif isinstance(spec.priority, int):
+                # Assumes priority is a numeric `nice` value.
+                nice_val = spec.priority
+                if nice_val != 0:
+                    script.add("nice", nice_val)
 
         if spec.exclusive_access:
             script.add_flag("exclusive")
@@ -212,6 +225,21 @@ class SlurmTransformer(TransformerBase):
         if spec.begin_time:
             script.add("begin", epoch_to_slurm_begin_time(spec.begin_time))
         script.add("chdir", spec.working_directory)
+
+        if spec.requeue is False:
+            script.add_flag("no-requeue")
+        
+        if spec.array_spec:
+            script.add("array", spec.array_spec)
+        
+        if spec.nodelist:
+            script.add("nodelist", spec.nodelist)
+        
+        if spec.exclude_nodes:
+            script.add("exclude", spec.exclude_nodes)
+            
+        if spec.licenses:
+            script.add("licenses", spec.licenses)
 
         # Dependencies
         if spec.depends_on:
@@ -311,42 +339,69 @@ class SlurmTransformer(TransformerBase):
                     # Let this error for nice for now...
                     if key == "nice":
                         spec.priority = nice_to_priority(int(value))
+                    elif key in ("qos", "priority"):
+                        spec.priority = value # Store QoS name or priority string
 
                     # Map Slurm keys to JobSpec attributes
-                    elif key == "job-name":
+                    elif key in ("J", "job-name", "job"):
                         spec.job_name = value
-                    elif key == "account":
+                    elif key in ("A", "account"):
                         spec.account = value
-                    elif key == "output":
+                    elif key in ("o", "output", "out"):
                         spec.output_file = value
-                    elif key == "error":
+                    elif key in ("e", "error", "err"):
                         spec.error_file = value
-                    elif key == "nodes":
+                    elif key in ("N", "nodes"):
                         spec.num_nodes = int(value)
-                    elif key == "ntasks":
+                    elif key in ("n", "ntasks", "tasks"):
                         spec.num_tasks = int(value)
-                    elif key == "cpus-per-task":
+                    elif key in ("c", "cpus-per-task"):
                         spec.cpus_per_task = int(value)
                     elif key == "gpus-per-task":
                         spec.gpus_per_task = int(value)
-                    elif key == "mem-per-cpu":
+                    elif key in ("gres", "gpus"):
+                        spec.generic_resources = value
+                    elif key in ("mem-per-cpu", "mem"):
                         spec.mem_per_task = value
-                    elif key == "mem":
-                        spec.mem_per_task = value
-                    elif key == "partition":
+                    elif key in ("p", "q", "partition", "paritition", "part"):
                         spec.queue = value
-                    elif key == "exclusive":
+                    elif key in ("exclusive", "exclusiv"):
                         spec.exclusive_access = True
-                    elif key == "chdir":
+                    elif key in ("D", "chdir", "workdir"):
                         spec.working_directory = value
-                    elif key == "time":
+                    elif key in ("t", "time"):
                         spec.wall_time = slurm_time_to_seconds(value)
                     elif key == "begin":
                         spec.begin_time = slurm_begin_time_to_epoch(value)
-                    elif key == "dependency":
+                    elif key in ("d", "dependency", "depend"):
                         # e.g., afterok:12345 or afterok:12345:67890
                         dep_parts = value.split(":")
                         spec.depends_on = dep_parts[-1] if len(dep_parts) == 2 else dep_parts[1:]
+                    elif key in ("a", "array"):
+                        spec.array_spec = value
+                    elif key == "mail-user":
+                        spec.mail_user = value
+                    elif key == "mail-type":
+                        spec.mail_type = value.split(',')
+                    elif key == "requeue":
+                        spec.requeue = True
+                    elif key == "no-requeue":
+                        spec.requeue = False
+                    elif key in ("w", "nodelist"):
+                        spec.nodelist = value
+                    elif key in ("x", "exclude"):
+                        spec.exclude_nodes = value
+                    elif key == 'image':                        
+                        spec.container_image = value
+                    elif key in ("L", "licenses"):
+                        spec.licenses = value
+                    elif key == "input":
+                        spec.input_file = value
+                    elif key in ("C", "constraint", "constrain", "constaring"):
+                        if isinstance(value, list):
+                           spec.constraints.extend(value)
+                        else:
+                           spec.constraints.append(value)
                     else:
                         not_handled.add(key)
                 continue

@@ -50,3 +50,12 @@ class JobSpec:
     # Dependencies and script
     depends_on: Optional[Union[str, List[str]]] = None
     script: List[str] = field(default_factory=list)
+
+    array_spec: Optional[str] = None
+    generic_resources: Optional[str] = None
+    mail_user: Optional[str] = None
+    mail_type: List[str] = field(default_factory=list)
+    requeue: Optional[bool] = None
+    nodelist: Optional[str] = None
+    exclude_nodes: Optional[str] = None
+    licenses: Optional[str] = None

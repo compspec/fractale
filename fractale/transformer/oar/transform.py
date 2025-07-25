@@ -110,7 +110,16 @@ def parse_oar_command(command_lines, spec):
     if not command_lines:
         return []
 
-    main_command = command_lines[-1]
+    main_command = ""
+    for line in command_lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            main_command = line
+            break
+            
+    if not main_command:
+        return []
+
     parts = shlex.split(main_command)
 
     # Common OAR launchers include mpirun or using oarsh explicitly
@@ -143,30 +152,55 @@ class OARTransformer(TransformerBase):
         script.add("q", spec.queue)
         script.add("O", spec.output_file)
         script.add("E", spec.error_file)
+        
+        # Mail notifications
+        if spec.mail_user:
+            script.add("m", spec.mail_user)
+            if spec.mail_type:
+                # OAR uses a single flag for each type
+                for mail_type in spec.mail_type:
+                    if mail_type.lower() in ['begin', 'b']:
+                        script.add_flag("b")
+                    elif mail_type.lower() in ['end', 'e']:
+                        script.add_flag("e")
+                    elif mail_type.lower() in ['abort', 'a']:
+                        script.add_flag("a")
 
         # --- Resource Selection (-l) ---
-        # OAR's resource model is often hierarchical. This is a common representation.
-        # It assumes tasks are evenly distributed across nodes.
-        cpus_per_node = (
-            (spec.num_tasks * spec.cpus_per_task) / spec.num_nodes if spec.num_nodes > 0 else 0
-        )
-
-        l_parts = [f"/nodes={spec.num_nodes}"]
-        if cpus_per_node > 0:
-            l_parts.append(f"/cpu={int(cpus_per_node)}")
+        # OAR's resource model is often hierarchical.
+        # This logic creates a resource string like /nodes=N/cpu=C/core=T,walltime=W
+        l_parts = []
+        if spec.num_nodes > 0:
+            l_parts.append(f"/nodes={spec.num_nodes}")
+            
+        # OAR distinguishes between logical CPUs (threads) and physical cores.
+        # We map cpus_per_task to 'core' for clarity.
+        if spec.cpus_per_task > 0:
+            l_parts.append(f"/core={spec.cpus_per_task}")
+        
         if spec.gpus_per_task > 0:
             # This requests nodes that *each* have at least this many GPUs.
             l_parts.append(f"/gpunum={spec.gpus_per_task}")
 
         resource_str = "".join(l_parts)
+        
+        # Node constraints are added as properties to the resource string.
+        if spec.constraints:
+            constraint_str = " AND ".join(f"'{c}'" for c in spec.constraints)
+            resource_str += f"/{constraint_str}"
 
         wt = seconds_to_oar_walltime(spec.wall_time)
         if wt:
             resource_str += f",walltime={wt}"
-        script.add("l", f'"{resource_str}"')
+        
+        if resource_str:
+            script.add("l", f'"{resource_str}"')
 
         if spec.exclusive_access:
             script.add_flag("x")
+            
+        if spec.requeue is False:
+            script.add("t", "idempotent") # The closest concept to no-requeue
 
         # --- Priority and Scheduling ---
         oar_prio = priority_to_oar_priority(spec.priority)
@@ -175,6 +209,11 @@ class OARTransformer(TransformerBase):
 
         bt = epoch_to_oar_begin_time(spec.begin_time)
         script.add("r", bt)
+        
+        # Dependencies
+        if spec.depends_on:
+            dep_str = "after:" + (":".join(spec.depends_on) if isinstance(spec.depends_on, list) else spec.depends_on)
+            script.add("after", dep_str)
 
         script.newline()
 
@@ -183,16 +222,20 @@ class OARTransformer(TransformerBase):
             for key, value in spec.environment.items():
                 script.add_line(f"export {key}='{value}'")
             script.newline()
+            
+        # If spec.script is defined, it takes precedence.
+        if spec.script:
+            script.add_lines(spec.script)
+        else:
+            cmd_parts = ["mpirun"]
+            if spec.container_image:
+                cmd_parts.extend(["singularity", "exec", spec.container_image])
+            if spec.executable:
+                cmd_parts.append(spec.executable)
+            if spec.arguments:
+                cmd_parts.extend(spec.arguments)
+            script.add_line(" ".join(cmd_parts))
 
-        cmd_parts = ["mpirun"]
-        if spec.container_image:
-            cmd_parts.extend(["singularity", "exec", spec.container_image])
-        if spec.executable:
-            cmd_parts.append(spec.executable)
-        if spec.arguments:
-            cmd_parts.extend(spec.arguments)
-
-        script.add_line(" ".join(cmd_parts))
         script.newline()
 
         return script.render()
@@ -215,7 +258,7 @@ class OARTransformer(TransformerBase):
                 key, val = m.groups()
                 key = key.strip()
                 if val:
-                    val = val.split("#", 1)[0]
+                    val = val.split("#", 1)[0] # Remove trailing comments
                 val = val.strip().strip('"') if val else ""
 
                 if key == "-n":
@@ -234,21 +277,40 @@ class OARTransformer(TransformerBase):
                     spec.priority = oar_priority_to_priority(int(val))
                 elif key == "-x":
                     spec.exclusive_access = True
+                elif key == "-t" and val == "idempotent":
+                    spec.requeue = False
+                elif key == "-after":
+                    spec.depends_on = val.split("after:")[1].split(':')
+                elif key == "-m":
+                    spec.mail_user = val
+                elif key in ["-a", "-b", "-e"]:
+                     mail_map = {"-a": "ABORT", "-b": "BEGIN", "-e": "END"}
+                     spec.mail_type.append(mail_map[key])
                 elif key == "-l":
-                    # Parse resource string like "/nodes=4/cpu=8,walltime=01:00:00"
-                    parts = re.split(r"[,/]", val)
+                    # Parse resource string like "/nodes=4/cpu=8/core=4/gpunum=1,walltime=01:00:00"
+                    resource_part = val.split(",walltime=")[0]
+                    if ",walltime=" in val:
+                        spec.wall_time = oar_walltime_to_seconds(val.split(",walltime=")[1])
+                        
+                    parts = re.split(r"/", resource_part)
                     for part in parts:
-                        if not "=" in part:
-                            continue
-                        k, v = part.split("=", 1)
-                        if k == "nodes":
-                            spec.num_nodes = int(v)
-                        elif k == "cpu":
-                            spec.cpus_per_task = int(v)
-                        elif k == "gpunum":
-                            spec.gpus_per_task = int(v)
-                        elif k == "walltime":
-                            spec.wall_time = oar_walltime_to_seconds(v)
+                        if not part: continue
+                        if "=" in part:
+                            k, v = part.split("=", 1)
+                            if k == "nodes":
+                                spec.num_nodes = int(v)
+                            # OAR has cpu, core, and thread. We'll map core to cpus_per_task.
+                            elif k == "core":
+                                spec.cpus_per_task = int(v)
+                            elif k == "cpu":
+                                # If core isn't set, use cpu as a fallback.
+                                if spec.cpus_per_task == 1:
+                                    spec.cpus_per_task = int(v)
+                            elif k == "gpunum":
+                                spec.gpus_per_task = int(v)
+                        else:
+                            # Assume parts without '=' are constraints
+                            spec.constraints.append(part.strip().strip("'"))
                 else:
                     not_handled.add(key)
                 continue
@@ -258,7 +320,13 @@ class OARTransformer(TransformerBase):
             command_lines.append(line)
 
         # We again assume a block of text here.
-        spec.script = command_lines
+        if command_lines:
+            spec.script = command_lines
+            parts = parse_oar_command(command_lines, spec)
+            if parts:
+                spec.executable = parts[0]
+                spec.arguments = parts[1:]
+
         if return_unhandled:
             return not_handled
         return spec

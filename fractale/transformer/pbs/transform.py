@@ -61,8 +61,11 @@ def pbs_time_to_seconds(time_str):
     """
     if not time_str:
         return None
-    h, m, s = map(int, time_str.split(":"))
-    return int(timedelta(hours=h, minutes=m, seconds=s).total_seconds())
+    try:
+        h, m, s = map(int, time_str.split(":"))
+        return int(timedelta(hours=h, minutes=m, seconds=s).total_seconds())
+    except (ValueError, IndexError):
+        return None
 
 
 def epoch_to_pbs_begin_time(epoch_seconds):
@@ -95,7 +98,16 @@ def parse_pbs_command(command_lines, spec):
     if not command_lines:
         return []
 
-    main_command = command_lines[-1]
+    main_command = ""
+    for line in command_lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            main_command = line
+            break
+            
+    if not main_command:
+        return []
+        
     parts = shlex.split(main_command)
 
     if parts and parts[0] in ("mpiexec", "mpirun"):
@@ -124,9 +136,24 @@ class PBSTransformer(TransformerBase):
         script.add("q", spec.queue)
         script.add("o", spec.output_file)
         script.add("e", spec.error_file)
+        
+        # Mail notifications
+        if spec.mail_user:
+            script.add("M", spec.mail_user)
+            # -m sets the conditions: a=abort, b=begin, e=end
+            mail_opts = "".join([m[0].lower() for m in spec.mail_type])
+            if mail_opts:
+                script.add("m", mail_opts)
 
         # Resource Selection (-l)
-        select_parts = [f"select={spec.num_nodes}"]
+        select_parts = []
+        if spec.num_nodes > 0:
+            select_parts.append(f"select={spec.num_nodes}")
+        
+        # mpiprocs is often used to specify total tasks, which works well with our spec
+        if spec.num_tasks > 1:
+            select_parts.append(f"mpiprocs={spec.num_tasks}")
+
         if spec.cpus_per_task > 1:
             select_parts.append(f"ncpus={spec.cpus_per_task}")
         if spec.gpus_per_task > 0:
@@ -134,12 +161,22 @@ class PBSTransformer(TransformerBase):
 
         # PBS memory format often includes units like gb or mb
         if spec.mem_per_task:
-            select_parts.append(f"mem={spec.mem_per_task.lower()}b")
+            # Standardize to lowercase and append 'b' for bytes.
+            mem_val = spec.mem_per_task.lower()
+            if not mem_val.endswith('b'):
+                mem_val += 'b'
+            select_parts.append(f"mem={mem_val}")
+        
         resource_str = ":".join(select_parts)
 
         wt = seconds_to_pbs(spec.wall_time)
         if wt:
             resource_str += f",walltime={wt}"
+        
+        # Task placement strategy
+        if spec.num_nodes > 1:
+            resource_str += f",place=scatter:excl" if spec.exclusive_access else ",place=scatter"
+
         script.add("l", resource_str)
 
         # Priority and scheduling
@@ -149,24 +186,44 @@ class PBSTransformer(TransformerBase):
 
         bt = epoch_to_pbs_begin_time(spec.begin_time)
         script.add("a", bt)
+        
+        # Requeue policy: -r n means not rerunnable
+        if spec.requeue is False:
+            script.add("r", "n")
+        
+        # Dependencies via -W depend=...
+        if spec.depends_on:
+            dep_list = spec.depends_on if isinstance(spec.depends_on, list) else [spec.depends_on]
+            dep_str = ":".join([f"afterok:{job_id}" for job_id in dep_list])
+            script.add("W", f"depend={dep_str}")
 
         # Environment & Execution
         if spec.environment:
-            env_vars = ",".join([f"{k}='{v}'" for k, v in spec.environment.items()])
-            script.add("v", env_vars)
-
+            # PBS's -v option is for exporting variables from the submission shell.
+            # To set arbitrary variables, it's safer to do it in the script body.
+            script.newline()
+            for key, value in spec.environment.items():
+                script.add_line(f"export {key}='{value}'")
+        
         script.newline()
 
-        # TODO: we probably want to keep this as a block of text, as it is.
-        cmd_parts = ["mpiexec"]
-        if spec.container_image:
-            cmd_parts.extend(["singularity", "exec", spec.container_image])
-        if spec.executable:
-            cmd_parts.append(spec.executable)
-        if spec.arguments:
-            cmd_parts.extend(spec.arguments)
+        # If spec.script is defined, it takes precedence.
+        if spec.script:
+            script.add_lines(spec.script)
+        else:
+            # TODO: we probably want to keep this as a block of text, as it is.
+            cmd_parts = ["mpiexec"]
+            if spec.num_tasks > 1:
+                cmd_parts.extend(["-n", str(spec.num_tasks)])
 
-        script.add_line(" ".join(cmd_parts))
+            if spec.container_image:
+                cmd_parts.extend(["singularity", "exec", spec.container_image])
+            if spec.executable:
+                cmd_parts.append(spec.executable)
+            if spec.arguments:
+                cmd_parts.extend(spec.arguments)
+            script.add_line(" ".join(cmd_parts))
+
         script.newline()
 
         return script.render()
@@ -176,11 +233,9 @@ class PBSTransformer(TransformerBase):
         Parses a PBS submission script string into a JobSpec.
         """
         spec = JobSpec()
-        pbs_re = re.compile(r"#PBS\s+-(\w)(?:\s+(.+))?")
+        pbs_re = re.compile(r"#PBS\s+(-[\w]+)(?:\s+(.+))?")
         command_lines = []
         not_handled = set()
-
-        resource_str, walltime_str = "", ""
 
         for line in content.splitlines():
             if not line.strip():
@@ -189,10 +244,12 @@ class PBSTransformer(TransformerBase):
             m = pbs_re.match(line)
             if m:
                 key, val = m.groups()
+                key = key.lstrip('-')
                 if val:
-                    val = val.split("#", 1)[0]
+                    val = val.split("#", 1)[0] # Remove trailing comments
 
-                val = val.strip() if val else ""
+                val = val.strip().strip('"') if val else True
+                
                 if key == "N":
                     spec.job_name = val
                 elif key == "A":
@@ -207,14 +264,39 @@ class PBSTransformer(TransformerBase):
                     spec.begin_time = pbs_begin_time_to_epoch(val)
                 elif key == "p":
                     spec.priority = pbs_priority_to_priority(int(val))
+                elif key == "M":
+                    spec.mail_user = val
+                elif key == "m":
+                    if 'a' in val: spec.mail_type.append("ABORT")
+                    if 'b' in val: spec.mail_type.append("BEGIN")
+                    if 'e' in val: spec.mail_type.append("END")
+                elif key == "r" and val == "n":
+                    spec.requeue = False
+                elif key == "W":
+                    if "depend=" in val:
+                        dep_str = val.split("depend=")[1]
+                        spec.depends_on = [d.split(":")[-1] for d in dep_str.split(":")]
                 elif key == "l":
                     # The -l line can contain multiple comma-separated values
-                    for part in val.split(","):
-                        if "walltime" in part:
-                            walltime_str = part.split("=", 1)[1]
-                        # Don't join with 'select', it's separate
-                        else:
-                            resource_str += part
+                    parts = val.replace(" ", "").split(',')
+                    for part in parts:
+                        if "=" not in part: continue
+                        k, v = part.split("=", 1)
+                        if k == "walltime":
+                            spec.wall_time = pbs_time_to_seconds(v)
+                        elif k == "select":
+                            # select=N:ncpus=C:mpiprocs=T...
+                            select_parts = v.split(':')
+                            spec.num_nodes = int(select_parts[0])
+                            for sp in select_parts[1:]:
+                                sk, sv = sp.split("=", 1)
+                                if sk == "ncpus": spec.cpus_per_task = int(sv)
+                                elif sk == "ngpus": spec.gpus_per_task = int(sv)
+                                elif sk == "mem": spec.mem_per_task = sv.upper().replace("B", "")
+                                elif sk == "mpiprocs": spec.num_tasks = int(sv)
+                        elif k == "place":
+                            if "excl" in v:
+                                spec.exclusive_access = True
                 else:
                     not_handled.add(key)
                 continue
@@ -223,25 +305,14 @@ class PBSTransformer(TransformerBase):
                 continue
             command_lines.append(line)
 
-        # Post-loop processing for complex -l string
-        spec.wall_time = pbs_time_to_seconds(walltime_str)
-        if resource_str:
-            res_parts = resource_str.split(":")
-            for part in res_parts:
-                if not "=" in part:
-                    continue
-                k, v = part.split("=", 1)
-                if k == "select":
-                    spec.num_nodes = int(v)
-                elif k == "ncpus":
-                    spec.cpus_per_task = int(v)
-                elif k == "ngpus":
-                    spec.gpus_per_task = int(v)
-                elif k == "mem":
-                    spec.mem_per_task = v.upper().replace("B", "")
-
         # We again assume a block of text here.
-        spec.script = command_lines
+        if command_lines:
+            spec.script = command_lines
+            parts = parse_pbs_command(command_lines, spec)
+            if parts:
+                spec.executable = parts[0]
+                spec.arguments = parts[1:]
+
         if return_unhandled:
             return not_handled
         return spec

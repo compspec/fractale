@@ -62,8 +62,11 @@ def lsf_walltime_to_seconds(time_str):
     if not time_str:
         return None
     try:
-        h, m = map(int, time_str.split(":"))
-        return int(timedelta(hours=h, minutes=m).total_seconds())
+        # LSF can also be just minutes.
+        if ":" in time_str:
+            h, m = map(int, time_str.split(":"))
+            return int(timedelta(hours=h, minutes=m).total_seconds())
+        return int(time_str) * 60
     except (ValueError, IndexError):
         return None
 
@@ -95,8 +98,17 @@ def parse_lsf_command(command_lines, spec):
     """
     if not command_lines:
         return []
+    
+    main_command = ""
+    for line in command_lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            main_command = line
+            break
+    
+    if not main_command:
+        return []
 
-    main_command = command_lines[-1]
     parts = shlex.split(main_command)
 
     # Common LSF launchers include jsrun (Spectrum MPI) or mpirun
@@ -129,15 +141,33 @@ class LSFTransformer(TransformerBase):
         script.add("q", spec.queue)
         script.add("o", spec.output_file)
         script.add("e", spec.error_file)
+        
+        # Mail notifications
+        if spec.mail_user:
+            script.add("u", spec.mail_user)
+            if "BEGIN" in [m.upper() for m in spec.mail_type]:
+                script.add_flag("B")
+            if "END" in [m.upper() for m in spec.mail_type]:
+                script.add_flag("N")
 
         # --- Resource Specification ---
-        # LSF is typically task-centric with the -n flag
-        script.add("n", spec.num_tasks * spec.num_nodes)
+        # LSF is typically task-centric with the -n flag for total tasks.
+        if spec.num_tasks > 0:
+            script.add("n", spec.num_tasks)
 
         wt = seconds_to_lsf_walltime(spec.wall_time)
         script.add("W", wt)
 
-        # Build the complex -R "rusage[...]" string
+        # Build the complex -R "select[...] span[...] rusage[...]" string
+        r_parts = []
+        if spec.constraints:
+            r_parts.append(f'select[{":".join(spec.constraints)}]')
+        
+        if spec.num_nodes > 1 and spec.num_tasks > 0:
+            tasks_per_node = spec.num_tasks // spec.num_nodes
+            if tasks_per_node > 0:
+                r_parts.append(f'span[ptile={tasks_per_node}]')
+
         rusage_parts = []
         if spec.mem_per_task:
             # LSF typically expects memory in MB
@@ -147,13 +177,20 @@ class LSFTransformer(TransformerBase):
             rusage_parts.append(f"mem={mem_mb}")
 
         if spec.gpus_per_task > 0:
+            # ngpus_excl_p = GPUs per process (task) in exclusive mode.
             rusage_parts.append(f"ngpus_excl_p={spec.gpus_per_task}")
-
+            
         if rusage_parts:
-            script.add("R", f'"rusage[{":".join(rusage_parts)}]"')
+            r_parts.append(f'rusage[{":".join(rusage_parts)}]')
+
+        if r_parts:
+            script.add("R", f'"{" ".join(r_parts)}"')
 
         if spec.exclusive_access:
-            script.add("x", "")  # LSF uses -x for exclusive node access
+            script.add_flag("x")
+        
+        if spec.requeue:
+            script.add_flag("r") # -r makes the job rerunnable
 
         # --- Priority and Scheduling ---
         lsf_prio = priority_to_lsf_priority(spec.priority)
@@ -162,6 +199,11 @@ class LSFTransformer(TransformerBase):
 
         bt = epoch_to_lsf_begin_time(spec.begin_time)
         script.add("b", bt)
+        
+        # Dependencies
+        if spec.depends_on:
+            dep_str = " && ".join([f"ended({job_id})" for job_id in spec.depends_on]) if isinstance(spec.depends_on, list) else f"ended({spec.depends_on})"
+            script.add("w", f'"{dep_str}"')
 
         script.newline()
 
@@ -170,16 +212,29 @@ class LSFTransformer(TransformerBase):
             for key, value in spec.environment.items():
                 script.add_line(f"export {key}='{value}'")
             script.newline()
+        
+        # If spec.script is defined, it takes precedence.
+        if spec.script:
+            script.add_lines(spec.script)
+        else:
+            # jsrun is a common launcher in LSF environments
+            cmd_parts = ["jsrun"]
+            # Map cpus_per_task to jsrun's resource set model
+            if spec.cpus_per_task > 0:
+                # 1 resource set with cpus_per_task cores, 1 task per set
+                cmd_parts.append(f"--nrs {spec.num_tasks}")
+                cmd_parts.append(f"--rs_per_host {spec.num_tasks // spec.num_nodes}")
+                cmd_parts.append(f"--tasks_per_rs 1")
+                cmd_parts.append(f"--cpu_per_rs {spec.cpus_per_task}")
+            
+            if spec.container_image:
+                cmd_parts.extend(["singularity", "exec", spec.container_image])
+            if spec.executable:
+                cmd_parts.append(spec.executable)
+            if spec.arguments:
+                cmd_parts.extend(spec.arguments)
+            script.add_line(" ".join(cmd_parts))
 
-        cmd_parts = ["jsrun"]  # A common launcher in LSF environments
-        if spec.container_image:
-            cmd_parts.extend(["singularity", "exec", spec.container_image])
-        if spec.executable:
-            cmd_parts.append(spec.executable)
-        if spec.arguments:
-            cmd_parts.extend(spec.arguments)
-
-        script.add_line(" ".join(cmd_parts))
         script.newline()
 
         return script.render()
@@ -189,7 +244,7 @@ class LSFTransformer(TransformerBase):
         Parses an LSF submission script string into a JobSpec.
         """
         spec = JobSpec()
-        bsub_re = re.compile(r"#BSUB\s+-(\w)(?:\s+(.+))?")
+        bsub_re = re.compile(r"#BSUB\s+(-[\w]+)(?:\s+(.+))?")
         command_lines = []
         not_handled = set()
 
@@ -200,10 +255,12 @@ class LSFTransformer(TransformerBase):
             m = bsub_re.match(line)
             if m:
                 key, val = m.groups()
+                key = key.lstrip('-')
                 if val:
-                    val = val.split("#", 1)[0]
+                    val = val.split("#", 1)[0] # Remove trailing comments
 
-                val = val.strip() if val else ""
+                val = val.strip().strip('"') if val else True
+
                 if key == "J":
                     spec.job_name = val
                 elif key == "P":
@@ -224,9 +281,23 @@ class LSFTransformer(TransformerBase):
                     spec.wall_time = lsf_walltime_to_seconds(val)
                 elif key == "x":
                     spec.exclusive_access = True
+                elif key == "r":
+                    spec.requeue = True
+                elif key == "u":
+                    spec.mail_user = val
+                elif key == "B":
+                    spec.mail_type.append("BEGIN")
+                elif key == "N":
+                    spec.mail_type.append("END")
+                elif key == "w":
+                    ended_jobs = re.findall(r'ended\(([^)]+)\)', val)
+                    spec.depends_on = ended_jobs
                 elif key == "R":
-                    # Parse rusage string like "rusage[mem=4096:ngpus_excl_p=1]"
-                    rusage_match = re.search(r"rusage\[(.*)\]", val)
+                    # Parse complex -R string
+                    rusage_match = re.search(r'rusage\[(.*?)\]', val)
+                    span_match = re.search(r'span\[ptile=(\d+)\]', val)
+                    select_match = re.search(r'select\[(.*?)\]', val)
+                    
                     if rusage_match:
                         for part in rusage_match.group(1).split(":"):
                             k, v = part.split("=", 1)
@@ -234,6 +305,12 @@ class LSFTransformer(TransformerBase):
                                 spec.mem_per_task = f"{v}M"  # Assume parsed value is MB
                             elif k == "ngpus_excl_p":
                                 spec.gpus_per_task = int(v)
+                    if span_match:
+                        tasks_per_node = int(span_match.group(1))
+                        if spec.num_tasks > 0 and tasks_per_node > 0:
+                            spec.num_nodes = spec.num_tasks // tasks_per_node
+                    if select_match:
+                        spec.constraints.extend(select_match.group(1).split(':'))
                 else:
                     not_handled.add(key)
                 continue
@@ -248,7 +325,20 @@ class LSFTransformer(TransformerBase):
             pass
 
         # We again assume a block of text here.
-        spec.script = command_lines
+        if command_lines:
+            spec.script = command_lines
+            parts = parse_lsf_command(command_lines, spec)
+            if parts:
+                # A full jsrun parser is complex; we can extract simple cases.
+                try:
+                    if "--cpu_per_rs" in parts:
+                        idx = parts.index("--cpu_per_rs")
+                        spec.cpus_per_task = int(parts[idx + 1])
+                except (ValueError, IndexError):
+                    pass
+                spec.executable = parts[0]
+                spec.arguments = parts[1:]
+
         if return_unhandled:
             return not_handled
         return spec

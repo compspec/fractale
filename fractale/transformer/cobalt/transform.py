@@ -92,7 +92,17 @@ def parse_cobalt_command(command_lines, spec):
     if not command_lines:
         return []
 
-    main_command = command_lines[-1]
+    # Find the first non-empty, non-comment line, which is likely the main command
+    main_command = ""
+    for line in command_lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            main_command = line
+            break
+            
+    if not main_command:
+        return []
+
     parts = shlex.split(main_command)
 
     # The common launcher on ALCF systems is 'aprun'
@@ -136,13 +146,38 @@ class CobaltTransformer(TransformerBase):
         bt = epoch_to_cobalt_begin_time(spec.begin_time)
         if bt:
             qsub_cmd.extend(["--at", bt])
+        
+        # Dependencies are specified with a colon-separated list of job IDs
+        if spec.depends_on:
+            dep_str = ":".join(spec.depends_on) if isinstance(spec.depends_on, list) else spec.depends_on
+            qsub_cmd.extend(["--dependencies", dep_str])
+            
+        # Node constraints are handled by --attrs
+        if spec.constraints:
+            qsub_cmd.extend(["--attrs", ":".join(spec.constraints)])
 
-        # -O sets the prefix for output/error files
+        # -O sets the prefix for output/error files, which is derived from the job name.
         qsub_cmd.extend(["-O", job_name])
+        # If explicit files are given, they override the prefix.
+        if spec.output_file:
+            qsub_cmd.extend(["-o", spec.output_file])
+        if spec.error_file:
+            qsub_cmd.extend(["-e", spec.error_file])
+            
+        # Email notifications
+        if spec.mail_user:
+            qsub_cmd.extend(["-M", spec.mail_user])
+            # Cobalt has a simple '--notify user' flag, equivalent to ALL in Slurm.
+            if spec.mail_type:
+                qsub_cmd.append("--notify user")
+
 
         if spec.environment:
             for k, v in spec.environment.items():
                 qsub_cmd.extend(["--env", f"{k}={v}"])
+        
+        # Note: Cobalt exclusive access is often handled by queue policy or `--mode script`.
+        # We omit a direct flag to avoid conflicting with system-specific setups.
 
         # Build the script that will be executed on the compute node
         exec_script_parts = ["#!/bin/bash", ""]
@@ -151,17 +186,23 @@ class CobaltTransformer(TransformerBase):
         aprun_cmd = ["aprun"]
 
         # Match aprun geometry to qsub submission
+        # -n total processes, -N processes per node
         aprun_cmd.extend(["-n", str(spec.num_tasks)])
         aprun_cmd.extend(["-N", str(spec.cpus_per_task)])
 
         if spec.container_image:
             aprun_cmd.extend(["singularity", "exec", spec.container_image])
-        if spec.executable:
-            aprun_cmd.append(spec.executable)
-        if spec.arguments:
-            aprun_cmd.extend(spec.arguments)
+        
+        # If spec.script is defined, it takes precedence over executable/arguments
+        if spec.script:
+             exec_script_parts.extend(spec.script)
+        else:
+             if spec.executable:
+                 aprun_cmd.append(spec.executable)
+             if spec.arguments:
+                 aprun_cmd.extend(spec.arguments)
+             exec_script_parts.append(" ".join(aprun_cmd))
 
-        exec_script_parts.append(" ".join(aprun_cmd))
         exec_script = "\n".join(exec_script_parts)
 
         # Combine into a self-submitting script using a "here document"
@@ -198,49 +239,87 @@ class CobaltTransformer(TransformerBase):
             i = 0
             while i < len(args):
                 arg = args[i]
-                val = args[i + 1] if i + 1 < len(args) else ""
-
-                if arg == "-A":
-                    spec.account = val
-                    i += 2
-                elif arg == "-q":
-                    spec.queue = val
-                    i += 2
-                elif arg == "-n":
-                    spec.num_nodes = int(val)
-                    i += 2
-                elif arg == "-t":
-                    spec.wall_time = cobalt_walltime_to_seconds(val)
-                    i += 2
-                elif arg == "--proccount":
-                    spec.num_tasks = int(val)
-                    i += 2
-                elif arg == "-O":
-                    spec.job_name = val
-                    i += 2
-                elif arg == "--at":
-                    spec.begin_time = cobalt_begin_time_to_epoch(val)
-                    i += 2
-                else:
-                    not_handled.add(arg)
+                
+                # Logic to handle both `--key value` and `--key=value`
+                key, value = None, None
+                if "=" in arg:
+                    key, value = arg.split("=", 1)
                     i += 1
+                else:
+                    key = arg
+                    # Check if next part is a value or another flag
+                    if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                        value = args[i + 1]
+                        i += 2
+                    else: # It's a boolean flag
+                        value = True
+                        i += 1
+                
+                key = key.lstrip("-")
 
+                if key == "A":
+                    spec.account = value
+                elif key == "q":
+                    spec.queue = value
+                elif key == "n":
+                    spec.num_nodes = int(value)
+                elif key == "t":
+                    spec.wall_time = cobalt_walltime_to_seconds(value)
+                elif key == "proccount":
+                    spec.num_tasks = int(value)
+                elif key == "O":
+                    # This sets the job name AND the output file prefix
+                    spec.job_name = value
+                    if not spec.output_file: spec.output_file = f"{value}.output"
+                    if not spec.error_file: spec.error_file = f"{value}.error"
+                elif key == "o":
+                    spec.output_file = value
+                elif key == "e":
+                    spec.error_file = value
+                elif key == "at":
+                    spec.begin_time = cobalt_begin_time_to_epoch(value)
+                elif key == "dependencies":
+                    spec.depends_on = value.split(":")
+                elif key == "attrs":
+                    spec.constraints = value.split(":")
+                elif key == "M":
+                    spec.mail_user = value
+                elif key == "notify" and value == "user":
+                    spec.mail_type = ["ALL"] # Simple mapping
+                elif key == "env":
+                     env_key, env_val = value.split("=", 1)
+                     spec.environment[env_key] = env_val
+                else:
+                    not_handled.add(key)
+        
         # We again assume a block of text here.
-        spec.script = script_body
+        if script_body:
+            spec.script = script_body
 
         # Parse the execution command from the script body
         parts = parse_cobalt_command(spec.script, spec)
         if parts:
             # Need to parse aprun args to get cpus_per_task
             temp_args = parts.copy()
-            if "-N" in temp_args:
-                idx = temp_args.index("-N")
-                spec.cpus_per_task = int(temp_args[idx + 1])
-                temp_args.pop(idx)
-                temp_args.pop(idx)
+            # This is a bit simplistic, but covers the common case
+            try:
+                if "-N" in temp_args:
+                    idx = temp_args.index("-N")
+                    spec.cpus_per_task = int(temp_args[idx + 1])
+                    temp_args.pop(idx)
+                    temp_args.pop(idx)
+                # Also handle -n for total tasks if --proccount wasn't used
+                if "-n" in temp_args and spec.num_tasks == 1:
+                    idx = temp_args.index("-n")
+                    spec.num_tasks = int(temp_args[idx + 1])
+                    temp_args.pop(idx)
+                    temp_args.pop(idx)
+            except (ValueError, IndexError):
+                pass # Ignore if parsing aprun fails
 
-            spec.executable = temp_args[0]
-            spec.arguments = temp_args[1:]
+            if temp_args:
+                spec.executable = temp_args[0]
+                spec.arguments = temp_args[1:]
 
         if return_unhandled:
             return not_handled

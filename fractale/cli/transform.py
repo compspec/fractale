@@ -7,7 +7,7 @@ import yaml
 from rich import print
 from rich.pretty import pprint
 
-from fractale.transformer import get_transformer
+from fractale.transformer import detect_transformer, get_transformer
 
 
 def main(args, extra, **kwargs):
@@ -17,6 +17,10 @@ def main(args, extra, **kwargs):
     # The jobspec needs to exist as a file here
     if not os.path.exists(args.jobspec):
         sys.exit(f"JobSpec {args.jobspec} does not exist.")
+
+    # If no from transformer defined, try to detect
+    if args.from_transformer is None:
+        args.from_transformer = detect_transformer(args.jobspec)
 
     # No selector or solver, just manual transform
     from_transformer = get_transformer(args.from_transformer)

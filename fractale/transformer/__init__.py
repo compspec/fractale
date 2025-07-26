@@ -7,6 +7,7 @@ from .lsf import Transformer as LSFTransformer
 from .oar import Transformer as OARTransformer
 from .pbs import Transformer as PBSTransformer
 from .slurm import Transformer as SlurmTransformer
+from .moab import Transformer as MoabTransformer
 
 plugins = {
     "kubernetes": KubernetesTransformer,
@@ -16,6 +17,7 @@ plugins = {
     "lsf": LSFTransformer,
     "oar": OARTransformer,
     "cobalt": CobaltTransformer,
+    "moab": MoabTransformer,
 }
 
 
@@ -32,6 +34,8 @@ def detect_transformer(jobspec):
     content = utils.read_file(jobspec)
     if "#FLUX" in content and "FLUX_CAPACITOR" not in content:
         return "flux"
+    if "#MSUB " in content:
+        return "moab"
     if "#SBATCH " in content:
         return "slurm"
     if "kind:" in content and "Job" in content:

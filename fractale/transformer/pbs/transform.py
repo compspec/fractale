@@ -104,10 +104,10 @@ def parse_pbs_command(command_lines, spec):
         if line and not line.startswith("#"):
             main_command = line
             break
-            
+
     if not main_command:
         return []
-        
+
     parts = shlex.split(main_command)
 
     if parts and parts[0] in ("mpiexec", "mpirun"):
@@ -136,7 +136,7 @@ class PBSTransformer(TransformerBase):
         script.add("q", spec.queue)
         script.add("o", spec.output_file)
         script.add("e", spec.error_file)
-        
+
         # Mail notifications
         if spec.mail_user:
             script.add("M", spec.mail_user)
@@ -149,7 +149,7 @@ class PBSTransformer(TransformerBase):
         select_parts = []
         if spec.num_nodes > 0:
             select_parts.append(f"select={spec.num_nodes}")
-        
+
         # mpiprocs is often used to specify total tasks, which works well with our spec
         if spec.num_tasks > 1:
             select_parts.append(f"mpiprocs={spec.num_tasks}")
@@ -163,16 +163,16 @@ class PBSTransformer(TransformerBase):
         if spec.mem_per_task:
             # Standardize to lowercase and append 'b' for bytes.
             mem_val = spec.mem_per_task.lower()
-            if not mem_val.endswith('b'):
-                mem_val += 'b'
+            if not mem_val.endswith("b"):
+                mem_val += "b"
             select_parts.append(f"mem={mem_val}")
-        
+
         resource_str = ":".join(select_parts)
 
         wt = seconds_to_pbs(spec.wall_time)
         if wt:
             resource_str += f",walltime={wt}"
-        
+
         # Task placement strategy
         if spec.num_nodes > 1:
             resource_str += f",place=scatter:excl" if spec.exclusive_access else ",place=scatter"
@@ -186,11 +186,11 @@ class PBSTransformer(TransformerBase):
 
         bt = epoch_to_pbs_begin_time(spec.begin_time)
         script.add("a", bt)
-        
+
         # Requeue policy: -r n means not rerunnable
         if spec.requeue is False:
             script.add("r", "n")
-        
+
         # Dependencies via -W depend=...
         if spec.depends_on:
             dep_list = spec.depends_on if isinstance(spec.depends_on, list) else [spec.depends_on]
@@ -204,7 +204,7 @@ class PBSTransformer(TransformerBase):
             script.newline()
             for key, value in spec.environment.items():
                 script.add_line(f"export {key}='{value}'")
-        
+
         script.newline()
 
         # If spec.script is defined, it takes precedence.
@@ -244,12 +244,12 @@ class PBSTransformer(TransformerBase):
             m = pbs_re.match(line)
             if m:
                 key, val = m.groups()
-                key = key.lstrip('-')
+                key = key.lstrip("-")
                 if val:
-                    val = val.split("#", 1)[0] # Remove trailing comments
+                    val = val.split("#", 1)[0]  # Remove trailing comments
 
                 val = val.strip().strip('"') if val else True
-                
+
                 if key == "N":
                     spec.job_name = val
                 elif key == "A":
@@ -267,9 +267,12 @@ class PBSTransformer(TransformerBase):
                 elif key == "M":
                     spec.mail_user = val
                 elif key == "m":
-                    if 'a' in val: spec.mail_type.append("ABORT")
-                    if 'b' in val: spec.mail_type.append("BEGIN")
-                    if 'e' in val: spec.mail_type.append("END")
+                    if "a" in val:
+                        spec.mail_type.append("ABORT")
+                    if "b" in val:
+                        spec.mail_type.append("BEGIN")
+                    if "e" in val:
+                        spec.mail_type.append("END")
                 elif key == "r" and val == "n":
                     spec.requeue = False
                 elif key == "W":
@@ -278,22 +281,27 @@ class PBSTransformer(TransformerBase):
                         spec.depends_on = [d.split(":")[-1] for d in dep_str.split(":")]
                 elif key == "l":
                     # The -l line can contain multiple comma-separated values
-                    parts = val.replace(" ", "").split(',')
+                    parts = val.replace(" ", "").split(",")
                     for part in parts:
-                        if "=" not in part: continue
+                        if "=" not in part:
+                            continue
                         k, v = part.split("=", 1)
                         if k == "walltime":
                             spec.wall_time = pbs_time_to_seconds(v)
                         elif k == "select":
                             # select=N:ncpus=C:mpiprocs=T...
-                            select_parts = v.split(':')
+                            select_parts = v.split(":")
                             spec.num_nodes = int(select_parts[0])
                             for sp in select_parts[1:]:
                                 sk, sv = sp.split("=", 1)
-                                if sk == "ncpus": spec.cpus_per_task = int(sv)
-                                elif sk == "ngpus": spec.gpus_per_task = int(sv)
-                                elif sk == "mem": spec.mem_per_task = sv.upper().replace("B", "")
-                                elif sk == "mpiprocs": spec.num_tasks = int(sv)
+                                if sk == "ncpus":
+                                    spec.cpus_per_task = int(sv)
+                                elif sk == "ngpus":
+                                    spec.gpus_per_task = int(sv)
+                                elif sk == "mem":
+                                    spec.mem_per_task = sv.upper().replace("B", "")
+                                elif sk == "mpiprocs":
+                                    spec.num_tasks = int(sv)
                         elif k == "place":
                             if "excl" in v:
                                 spec.exclusive_access = True

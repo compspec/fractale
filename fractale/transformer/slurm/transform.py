@@ -228,16 +228,16 @@ class SlurmTransformer(TransformerBase):
 
         if spec.requeue is False:
             script.add_flag("no-requeue")
-        
+
         if spec.array_spec:
             script.add("array", spec.array_spec)
-        
+
         if spec.nodelist:
             script.add("nodelist", spec.nodelist)
-        
+
         if spec.exclude_nodes:
             script.add("exclude", spec.exclude_nodes)
-            
+
         if spec.licenses:
             script.add("licenses", spec.licenses)
 
@@ -292,7 +292,7 @@ class SlurmTransformer(TransformerBase):
         # Directives not handled
         not_handled = set()
 
-        # This regex is now only used to identify a directive line
+        # This regex is only used to identify a directive line
         sbatch_line_re = re.compile(r"^\s*#SBATCH")
         script_content = utils.read_file(filename)
 
@@ -317,22 +317,47 @@ class SlurmTransformer(TransformerBase):
                 i = 0
                 while i < len(directives):
                     directive = directives[i]
+                    key, value = None, None
 
                     if "=" in directive:
                         # Handles --key=value
                         key, value = directive.split("=", 1)
                         key = key.lstrip("-")
                         i += 1
-                    elif directive.startswith("-"):
+
+                    elif directive.startswith("--"):
                         key = directive.lstrip("-")
-                        # Check if next part is a value or another flag
                         if i + 1 < len(directives) and not directives[i + 1].startswith("-"):
                             value = directives[i + 1]
                             i += 2
-                        else:  # It's a boolean flag like --exclusive
+                        else:
                             value = True
                             i += 1
-                    else:  # Not a parsable directive, skip
+
+                    # Logic for packed flags
+                    elif directive.startswith("-") and len(directive) > 2:
+                        # Handles packed short-form flags like -N16 or -t01:00:00
+                        flag_char = directive[1]
+                        # Check if this character is a known flag that takes a value
+                        if flag_char in "Nntcpt":
+                            key = flag_char
+                            value = directive[2:]
+                            i += 1
+
+                        # Not a known packed flag, skip
+                        else:
+                            i += 1
+                            continue
+
+                    elif directive.startswith("-"):
+                        key = directive.lstrip("-")
+                        if i + 1 < len(directives) and not directives[i + 1].startswith("-"):
+                            value = directives[i + 1]
+                            i += 2
+                        else:
+                            value = True
+                            i += 1
+                    else:
                         i += 1
                         continue
 
@@ -340,7 +365,7 @@ class SlurmTransformer(TransformerBase):
                     if key == "nice":
                         spec.priority = nice_to_priority(int(value))
                     elif key in ("qos", "priority"):
-                        spec.priority = value # Store QoS name or priority string
+                        spec.priority = value  # Store QoS name or priority string
 
                     # Map Slurm keys to JobSpec attributes
                     elif key in ("J", "job-name", "job"):
@@ -374,7 +399,6 @@ class SlurmTransformer(TransformerBase):
                     elif key == "begin":
                         spec.begin_time = slurm_begin_time_to_epoch(value)
                     elif key in ("d", "dependency", "depend"):
-                        # e.g., afterok:12345 or afterok:12345:67890
                         dep_parts = value.split(":")
                         spec.depends_on = dep_parts[-1] if len(dep_parts) == 2 else dep_parts[1:]
                     elif key in ("a", "array"):
@@ -382,7 +406,7 @@ class SlurmTransformer(TransformerBase):
                     elif key == "mail-user":
                         spec.mail_user = value
                     elif key == "mail-type":
-                        spec.mail_type = value.split(',')
+                        spec.mail_type = value.split(",")
                     elif key == "requeue":
                         spec.requeue = True
                     elif key == "no-requeue":
@@ -391,17 +415,31 @@ class SlurmTransformer(TransformerBase):
                         spec.nodelist = value
                     elif key in ("x", "exclude"):
                         spec.exclude_nodes = value
-                    elif key == 'image':                        
+                    elif key == "image":
                         spec.container_image = value
-                    elif key in ("L", "licenses"):
+                    elif key in ("L", "licenses", "license"):
                         spec.licenses = value
                     elif key == "input":
                         spec.input_file = value
                     elif key in ("C", "constraint", "constrain", "constaring"):
                         if isinstance(value, list):
-                           spec.constraints.extend(value)
+                            spec.constraints.extend(value)
                         else:
-                           spec.constraints.append(value)
+                            spec.constraints.append(value)
+
+                    elif key == "ntasks-per-node":
+                        # This is a constraint, not a direct resource request in the same way.
+                        # For now, we can add it to the generic constraints list.
+                        spec.constraints.append(f"ntasks-per-node={value}")
+                    elif key == "ntasks-per-socket":
+                        spec.constraints.append(f"ntasks-per-socket={value}")
+                    elif key == "time-min":
+                        # This is usually a partition/QoS setting, but we can note it.
+                        not_handled.add(f"{key}={value}")
+                    elif key == "signal":
+                        not_handled.add(f"{key}={value}")
+                    elif key == "propagate":
+                        not_handled.add(f"{key}={value}")
                     else:
                         not_handled.add(key)
                 continue

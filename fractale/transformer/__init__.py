@@ -4,10 +4,10 @@ from .cobalt import Transformer as CobaltTransformer
 from .flux import Transformer as FluxTransformer
 from .kubernetes import Transformer as KubernetesTransformer
 from .lsf import Transformer as LSFTransformer
+from .moab import Transformer as MoabTransformer
 from .oar import Transformer as OARTransformer
 from .pbs import Transformer as PBSTransformer
 from .slurm import Transformer as SlurmTransformer
-from .moab import Transformer as MoabTransformer
 
 plugins = {
     "kubernetes": KubernetesTransformer,

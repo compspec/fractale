@@ -12,6 +12,7 @@ class MoabScript(Script):
     """
     A helper class to build a Moab (#MSUB) batch script line by line.
     """
+
     def __init__(self):
         self.script_lines = ["#!/bin/bash"]
         self.directive = "#MSUB"
@@ -33,7 +34,7 @@ def seconds_to_moab_walltime(seconds):
     # This shouldn't happen, but we return 0 so we use the default.
     if not seconds or seconds <= 0:
         return None
-    
+
     # Moab walltime does not typically include days.
     hours, seconds_rem = divmod(seconds, 3600)
     minutes, seconds = divmod(seconds_rem, 60)
@@ -55,7 +56,7 @@ def epoch_to_moab_begin_time(epoch_seconds: int) -> str:
 def moab_walltime_to_seconds(time_str):
     if not time_str:
         return None
-    
+
     h = 0
     m = 0
     s = 0
@@ -78,7 +79,7 @@ def parse_moab_command(command_lines, spec):
     parts = shlex.split(main_command)
 
     # Unwrap common launchers like mpiexec
-    if parts and parts[0] in ('mpiexec', 'mpirun'):
+    if parts and parts[0] in ("mpiexec", "mpirun"):
         parts = parts[1:]
 
     if parts and parts[0] in ("singularity", "apptainer") and parts[1] == "exec":
@@ -136,7 +137,7 @@ def moab_priority_to_priority(moab_priority):
         return "low"
     if 0 < moab_priority < 1000:
         return "high"
-    return "urgent" # for priority >= 1000
+    return "urgent"  # for priority >= 1000
 
 
 class MoabTransformer(TransformerBase):
@@ -163,30 +164,27 @@ class MoabTransformer(TransformerBase):
         # I/O
         script.add("o", spec.output_file)
         script.add("e", spec.error_file)
-        # Moab does not have direct mail-type equivalents like Slurm, -m is simpler
         if spec.mail_user:
-            script.add("m", spec.mail_user)
+            script.add("M", spec.mail_user)
 
         # Resource Requests
         resource_parts = []
-        # Moab's `-l` is key: nodes=X:ppn=Y where ppn is procs per node
         if spec.num_nodes and spec.cpus_per_task:
             resource_parts.append(f"nodes={spec.num_nodes}:ppn={spec.cpus_per_task}")
-        
-        if spec.gpus_per_task and spec.gpus_per_task > 0:
-            resource_parts.append(f"gpus={spec.gpus_per_task}")
-        
+
+        if spec.generic_resources:
+            resource_parts.append(f"gres={spec.generic_resources}")
+
         if spec.mem_per_task:
             resource_parts.append(f"mem={spec.mem_per_task}")
 
         if spec.exclusive_access:
             resource_parts.append("naccesspolicy=singlejob")
-        
-        # Scheduling and Constraints
+
         wt = seconds_to_moab_walltime(spec.wall_time)
         if wt:
-            script.add("l", f"walltime={wt}")
-        
+            resource_parts.append(f"walltime={wt}")
+
         if resource_parts:
             script.add("l", " ".join(resource_parts))
 
@@ -196,27 +194,26 @@ class MoabTransformer(TransformerBase):
         if moab_prio != 0:
             script.add("p", moab_prio)
 
+        if spec.requeue is not None:
+            script.add("r", "y" if spec.requeue else "n")
+
         if spec.begin_time:
             script.add("S", epoch_to_moab_begin_time(spec.begin_time))
-        
+
         script.add("d", spec.working_directory)
-        
-        # Dependencies: `-l depend=...`
+
         if spec.depends_on:
             if isinstance(spec.depends_on, list):
-                dependency_str = ":".join(spec.depends_on)
-                script.add("l", f"depend=afterok:{dependency_str}")
+                script.add("l", f"depend=afterok:{':'.join(spec.depends_on)}")
             else:
                 script.add("l", f"depend={spec.depends_on}")
 
-        # I am just adding this for readability
-        script.newline()
-
-        # Environment Variables
+        # Moab uses -v for environment variables, which is more robust than export
         if spec.environment:
             for key, value in spec.environment.items():
-                script.add_line(f"export {key}='{value}'")
-            script.newline()
+                script.add("v", f"{key}={value}")
+
+        script.newline()
 
         # Execution logic
         container_exec = []
@@ -239,8 +236,9 @@ class MoabTransformer(TransformerBase):
         spec = JobSpec()
         command_lines = []
         not_handled = set()
-        
-        # Regex to capture #MSUB directives (simple -f <val> format)
+        # Weird -l directives
+        l_directives = []
+
         msub_re = re.compile(r"#MSUB\s+-(\w+)(?:\s+(.+))?")
         script_content = utils.read_file(filename)
 
@@ -251,39 +249,46 @@ class MoabTransformer(TransformerBase):
             match = msub_re.match(line)
             if match:
                 key, value = match.groups()
-                value = value.strip() if value else ""
+                # Strip comments and whitespace
+                value = value.split("#", 1)[0].strip() if value else ""
 
-                if key == 'N': spec.job_name = value
-                elif key == 'A': spec.account = value
-                elif key == 'o': spec.output_file = value
-                elif key == 'e': spec.error_file = value
-                elif key == 'm': spec.mail_user = value
-                elif key == 'q': spec.queue = value
-                elif key == 'd': spec.working_directory = value
-                elif key == 'S': spec.begin_time = moab_begin_time_to_epoch(value)
-                elif key == 'p': spec.priority = moab_priority_to_priority(int(value))
-                elif key == 'l':
-                    # The -l line can contain walltime and other resources
-                    # e.g., -l walltime=01:00:00 -l nodes=4:ppn=8
-                    if 'walltime' in value:
-                        spec.wall_time = moab_walltime_to_seconds(value.split('=', 1)[1])
-                    elif 'nodes' in value:
-                        for part in value.split(':'):
-                            k, v = part.split('=', 1)
-                            if k == 'nodes': spec.num_nodes = int(v)
-                            elif k == 'ppn': spec.cpus_per_task = int(v)
-                    elif 'mem' in value:
-                        spec.mem_per_task = value.split('=', 1)[1]
-                    elif 'gpus' in value:
-                        spec.gpus_per_task = int(value.split('=', 1)[1])
-                    elif 'depend' in value:
-                        spec.depends_on = value.split('=', 1)[1]
-                    elif 'naccesspolicy' in value and 'singlejob' in value:
-                        spec.exclusive_access = True
+                if key == "N":
+                    spec.job_name = value
+                elif key == "A":
+                    spec.account = value
+                elif key == "o":
+                    spec.output_file = value
+                elif key == "e":
+                    spec.error_file = value
+                elif key == "m" or key == "M":
+                    spec.mail_user = value
+                elif key == "q":
+                    spec.queue = value
+                elif key == "d":
+                    spec.working_directory = value
+                elif key == "S":
+                    spec.begin_time = moab_begin_time_to_epoch(value)
+                elif key == "p":
+                    spec.priority = moab_priority_to_priority(int(value))
+                elif key == "r":
+                    spec.requeue = value.lower() == "y"
+                elif key == "j":  # join stdout/stderr
+                    if spec.output_file:
+                        spec.error_file = spec.output_file
+                    elif spec.error_file:
+                        spec.output_file = spec.error_file
+                elif key == "v":
+                    if "=" in value:
+                        env_key, env_val = value.split("=", 1)
+                        spec.environment[env_key] = env_val
+                elif key == "l":
+                    # Collect all resource (-l) directives to parse them together
+                    l_directives.append(value)
                 else:
                     not_handled.add(key)
                 continue
 
+            # This handles environment variables set outside of #MSUB -v
             if line.lower().startswith("export "):
                 env_match = re.match(r"export\s+([^=]+)=(.*)", line)
                 if env_match:
@@ -292,8 +297,48 @@ class MoabTransformer(TransformerBase):
 
             if line.startswith("#"):
                 continue
-            
+
             command_lines.append(line)
+
+        # Post parsing for all collected -l directives ---
+        full_l_string = " ".join(l_directives)
+
+        # Use shlex to handle spaces and colons within resource specs
+        for part in shlex.split(full_l_string):
+
+            # Split combined node:ppn requests first
+            if "nodes" in part and ":" in part:
+                for subpart in part.split(":"):
+                    if "=" not in subpart:
+                        continue
+                    k, v = subpart.split("=", 1)
+                    if k == "nodes":
+                        spec.num_nodes = int(v)
+                    elif k == "ppn":
+                        spec.cpus_per_task = int(v)
+
+            elif "=" in part:
+                k, v = part.split("=", 1)
+                if k == "walltime":
+                    spec.wall_time = moab_walltime_to_seconds(v)
+                elif k == "nodes":
+                    spec.num_nodes = int(v)
+                elif k == "ppn":
+                    spec.cpus_per_task = int(v)
+                elif k == "procs":
+                    spec.num_tasks = int(v)
+                elif k == "mem":
+                    spec.mem_per_task = v
+                elif k == "gres" or k == "gpus":
+                    spec.generic_resources = v
+                elif k == "depend":
+                    spec.depends_on = v
+                elif k == "naccesspolicy" and v == "singlejob":
+                    spec.exclusive_access = True
+                elif k == "qos" and not spec.queue:
+                    spec.queue = v  # Use qos if queue isn't set
+                else:
+                    not_handled.add(f"l:{k}")
 
         if command_lines:
             spec.script = command_lines

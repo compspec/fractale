@@ -98,14 +98,14 @@ def parse_lsf_command(command_lines, spec):
     """
     if not command_lines:
         return []
-    
+
     main_command = ""
     for line in command_lines:
         line = line.strip()
         if line and not line.startswith("#"):
             main_command = line
             break
-    
+
     if not main_command:
         return []
 
@@ -141,7 +141,7 @@ class LSFTransformer(TransformerBase):
         script.add("q", spec.queue)
         script.add("o", spec.output_file)
         script.add("e", spec.error_file)
-        
+
         # Mail notifications
         if spec.mail_user:
             script.add("u", spec.mail_user)
@@ -162,11 +162,11 @@ class LSFTransformer(TransformerBase):
         r_parts = []
         if spec.constraints:
             r_parts.append(f'select[{":".join(spec.constraints)}]')
-        
+
         if spec.num_nodes > 1 and spec.num_tasks > 0:
             tasks_per_node = spec.num_tasks // spec.num_nodes
             if tasks_per_node > 0:
-                r_parts.append(f'span[ptile={tasks_per_node}]')
+                r_parts.append(f"span[ptile={tasks_per_node}]")
 
         rusage_parts = []
         if spec.mem_per_task:
@@ -179,7 +179,7 @@ class LSFTransformer(TransformerBase):
         if spec.gpus_per_task > 0:
             # ngpus_excl_p = GPUs per process (task) in exclusive mode.
             rusage_parts.append(f"ngpus_excl_p={spec.gpus_per_task}")
-            
+
         if rusage_parts:
             r_parts.append(f'rusage[{":".join(rusage_parts)}]')
 
@@ -188,9 +188,9 @@ class LSFTransformer(TransformerBase):
 
         if spec.exclusive_access:
             script.add_flag("x")
-        
+
         if spec.requeue:
-            script.add_flag("r") # -r makes the job rerunnable
+            script.add_flag("r")  # -r makes the job rerunnable
 
         # --- Priority and Scheduling ---
         lsf_prio = priority_to_lsf_priority(spec.priority)
@@ -199,10 +199,14 @@ class LSFTransformer(TransformerBase):
 
         bt = epoch_to_lsf_begin_time(spec.begin_time)
         script.add("b", bt)
-        
+
         # Dependencies
         if spec.depends_on:
-            dep_str = " && ".join([f"ended({job_id})" for job_id in spec.depends_on]) if isinstance(spec.depends_on, list) else f"ended({spec.depends_on})"
+            dep_str = (
+                " && ".join([f"ended({job_id})" for job_id in spec.depends_on])
+                if isinstance(spec.depends_on, list)
+                else f"ended({spec.depends_on})"
+            )
             script.add("w", f'"{dep_str}"')
 
         script.newline()
@@ -212,7 +216,7 @@ class LSFTransformer(TransformerBase):
             for key, value in spec.environment.items():
                 script.add_line(f"export {key}='{value}'")
             script.newline()
-        
+
         # If spec.script is defined, it takes precedence.
         if spec.script:
             script.add_lines(spec.script)
@@ -226,7 +230,7 @@ class LSFTransformer(TransformerBase):
                 cmd_parts.append(f"--rs_per_host {spec.num_tasks // spec.num_nodes}")
                 cmd_parts.append(f"--tasks_per_rs 1")
                 cmd_parts.append(f"--cpu_per_rs {spec.cpus_per_task}")
-            
+
             if spec.container_image:
                 cmd_parts.extend(["singularity", "exec", spec.container_image])
             if spec.executable:
@@ -255,9 +259,9 @@ class LSFTransformer(TransformerBase):
             m = bsub_re.match(line)
             if m:
                 key, val = m.groups()
-                key = key.lstrip('-')
+                key = key.lstrip("-")
                 if val:
-                    val = val.split("#", 1)[0] # Remove trailing comments
+                    val = val.split("#", 1)[0]  # Remove trailing comments
 
                 val = val.strip().strip('"') if val else True
 
@@ -290,14 +294,14 @@ class LSFTransformer(TransformerBase):
                 elif key == "N":
                     spec.mail_type.append("END")
                 elif key == "w":
-                    ended_jobs = re.findall(r'ended\(([^)]+)\)', val)
+                    ended_jobs = re.findall(r"ended\(([^)]+)\)", val)
                     spec.depends_on = ended_jobs
                 elif key == "R":
                     # Parse complex -R string
-                    rusage_match = re.search(r'rusage\[(.*?)\]', val)
-                    span_match = re.search(r'span\[ptile=(\d+)\]', val)
-                    select_match = re.search(r'select\[(.*?)\]', val)
-                    
+                    rusage_match = re.search(r"rusage\[(.*?)\]", val)
+                    span_match = re.search(r"span\[ptile=(\d+)\]", val)
+                    select_match = re.search(r"select\[(.*?)\]", val)
+
                     if rusage_match:
                         for part in rusage_match.group(1).split(":"):
                             k, v = part.split("=", 1)
@@ -310,7 +314,7 @@ class LSFTransformer(TransformerBase):
                         if spec.num_tasks > 0 and tasks_per_node > 0:
                             spec.num_nodes = spec.num_tasks // tasks_per_node
                     if select_match:
-                        spec.constraints.extend(select_match.group(1).split(':'))
+                        spec.constraints.extend(select_match.group(1).split(":"))
                 else:
                     not_handled.add(key)
                 continue

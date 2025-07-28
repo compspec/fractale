@@ -116,7 +116,7 @@ def parse_oar_command(command_lines, spec):
         if line and not line.startswith("#"):
             main_command = line
             break
-            
+
     if not main_command:
         return []
 
@@ -152,18 +152,18 @@ class OARTransformer(TransformerBase):
         script.add("q", spec.queue)
         script.add("O", spec.output_file)
         script.add("E", spec.error_file)
-        
+
         # Mail notifications
         if spec.mail_user:
             script.add("m", spec.mail_user)
             if spec.mail_type:
                 # OAR uses a single flag for each type
                 for mail_type in spec.mail_type:
-                    if mail_type.lower() in ['begin', 'b']:
+                    if mail_type.lower() in ["begin", "b"]:
                         script.add_flag("b")
-                    elif mail_type.lower() in ['end', 'e']:
+                    elif mail_type.lower() in ["end", "e"]:
                         script.add_flag("e")
-                    elif mail_type.lower() in ['abort', 'a']:
+                    elif mail_type.lower() in ["abort", "a"]:
                         script.add_flag("a")
 
         # --- Resource Selection (-l) ---
@@ -172,18 +172,18 @@ class OARTransformer(TransformerBase):
         l_parts = []
         if spec.num_nodes > 0:
             l_parts.append(f"/nodes={spec.num_nodes}")
-            
+
         # OAR distinguishes between logical CPUs (threads) and physical cores.
         # We map cpus_per_task to 'core' for clarity.
         if spec.cpus_per_task > 0:
             l_parts.append(f"/core={spec.cpus_per_task}")
-        
+
         if spec.gpus_per_task > 0:
             # This requests nodes that *each* have at least this many GPUs.
             l_parts.append(f"/gpunum={spec.gpus_per_task}")
 
         resource_str = "".join(l_parts)
-        
+
         # Node constraints are added as properties to the resource string.
         if spec.constraints:
             constraint_str = " AND ".join(f"'{c}'" for c in spec.constraints)
@@ -192,15 +192,15 @@ class OARTransformer(TransformerBase):
         wt = seconds_to_oar_walltime(spec.wall_time)
         if wt:
             resource_str += f",walltime={wt}"
-        
+
         if resource_str:
             script.add("l", f'"{resource_str}"')
 
         if spec.exclusive_access:
             script.add_flag("x")
-            
+
         if spec.requeue is False:
-            script.add("t", "idempotent") # The closest concept to no-requeue
+            script.add("t", "idempotent")  # The closest concept to no-requeue
 
         # --- Priority and Scheduling ---
         oar_prio = priority_to_oar_priority(spec.priority)
@@ -209,10 +209,12 @@ class OARTransformer(TransformerBase):
 
         bt = epoch_to_oar_begin_time(spec.begin_time)
         script.add("r", bt)
-        
+
         # Dependencies
         if spec.depends_on:
-            dep_str = "after:" + (":".join(spec.depends_on) if isinstance(spec.depends_on, list) else spec.depends_on)
+            dep_str = "after:" + (
+                ":".join(spec.depends_on) if isinstance(spec.depends_on, list) else spec.depends_on
+            )
             script.add("after", dep_str)
 
         script.newline()
@@ -222,7 +224,7 @@ class OARTransformer(TransformerBase):
             for key, value in spec.environment.items():
                 script.add_line(f"export {key}='{value}'")
             script.newline()
-            
+
         # If spec.script is defined, it takes precedence.
         if spec.script:
             script.add_lines(spec.script)
@@ -258,7 +260,7 @@ class OARTransformer(TransformerBase):
                 key, val = m.groups()
                 key = key.strip()
                 if val:
-                    val = val.split("#", 1)[0] # Remove trailing comments
+                    val = val.split("#", 1)[0]  # Remove trailing comments
                 val = val.strip().strip('"') if val else ""
 
                 if key == "-n":
@@ -280,21 +282,22 @@ class OARTransformer(TransformerBase):
                 elif key == "-t" and val == "idempotent":
                     spec.requeue = False
                 elif key == "-after":
-                    spec.depends_on = val.split("after:")[1].split(':')
+                    spec.depends_on = val.split("after:")[1].split(":")
                 elif key == "-m":
                     spec.mail_user = val
                 elif key in ["-a", "-b", "-e"]:
-                     mail_map = {"-a": "ABORT", "-b": "BEGIN", "-e": "END"}
-                     spec.mail_type.append(mail_map[key])
+                    mail_map = {"-a": "ABORT", "-b": "BEGIN", "-e": "END"}
+                    spec.mail_type.append(mail_map[key])
                 elif key == "-l":
                     # Parse resource string like "/nodes=4/cpu=8/core=4/gpunum=1,walltime=01:00:00"
                     resource_part = val.split(",walltime=")[0]
                     if ",walltime=" in val:
                         spec.wall_time = oar_walltime_to_seconds(val.split(",walltime=")[1])
-                        
+
                     parts = re.split(r"/", resource_part)
                     for part in parts:
-                        if not part: continue
+                        if not part:
+                            continue
                         if "=" in part:
                             k, v = part.split("=", 1)
                             if k == "nodes":

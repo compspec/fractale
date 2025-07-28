@@ -99,7 +99,7 @@ def parse_cobalt_command(command_lines, spec):
         if line and not line.startswith("#"):
             main_command = line
             break
-            
+
     if not main_command:
         return []
 
@@ -146,12 +146,14 @@ class CobaltTransformer(TransformerBase):
         bt = epoch_to_cobalt_begin_time(spec.begin_time)
         if bt:
             qsub_cmd.extend(["--at", bt])
-        
+
         # Dependencies are specified with a colon-separated list of job IDs
         if spec.depends_on:
-            dep_str = ":".join(spec.depends_on) if isinstance(spec.depends_on, list) else spec.depends_on
+            dep_str = (
+                ":".join(spec.depends_on) if isinstance(spec.depends_on, list) else spec.depends_on
+            )
             qsub_cmd.extend(["--dependencies", dep_str])
-            
+
         # Node constraints are handled by --attrs
         if spec.constraints:
             qsub_cmd.extend(["--attrs", ":".join(spec.constraints)])
@@ -163,7 +165,7 @@ class CobaltTransformer(TransformerBase):
             qsub_cmd.extend(["-o", spec.output_file])
         if spec.error_file:
             qsub_cmd.extend(["-e", spec.error_file])
-            
+
         # Email notifications
         if spec.mail_user:
             qsub_cmd.extend(["-M", spec.mail_user])
@@ -171,11 +173,10 @@ class CobaltTransformer(TransformerBase):
             if spec.mail_type:
                 qsub_cmd.append("--notify user")
 
-
         if spec.environment:
             for k, v in spec.environment.items():
                 qsub_cmd.extend(["--env", f"{k}={v}"])
-        
+
         # Note: Cobalt exclusive access is often handled by queue policy or `--mode script`.
         # We omit a direct flag to avoid conflicting with system-specific setups.
 
@@ -192,16 +193,16 @@ class CobaltTransformer(TransformerBase):
 
         if spec.container_image:
             aprun_cmd.extend(["singularity", "exec", spec.container_image])
-        
+
         # If spec.script is defined, it takes precedence over executable/arguments
         if spec.script:
-             exec_script_parts.extend(spec.script)
+            exec_script_parts.extend(spec.script)
         else:
-             if spec.executable:
-                 aprun_cmd.append(spec.executable)
-             if spec.arguments:
-                 aprun_cmd.extend(spec.arguments)
-             exec_script_parts.append(" ".join(aprun_cmd))
+            if spec.executable:
+                aprun_cmd.append(spec.executable)
+            if spec.arguments:
+                aprun_cmd.extend(spec.arguments)
+            exec_script_parts.append(" ".join(aprun_cmd))
 
         exec_script = "\n".join(exec_script_parts)
 
@@ -239,7 +240,7 @@ class CobaltTransformer(TransformerBase):
             i = 0
             while i < len(args):
                 arg = args[i]
-                
+
                 # Logic to handle both `--key value` and `--key=value`
                 key, value = None, None
                 if "=" in arg:
@@ -251,10 +252,10 @@ class CobaltTransformer(TransformerBase):
                     if i + 1 < len(args) and not args[i + 1].startswith("-"):
                         value = args[i + 1]
                         i += 2
-                    else: # It's a boolean flag
+                    else:  # It's a boolean flag
                         value = True
                         i += 1
-                
+
                 key = key.lstrip("-")
 
                 if key == "A":
@@ -270,8 +271,10 @@ class CobaltTransformer(TransformerBase):
                 elif key == "O":
                     # This sets the job name AND the output file prefix
                     spec.job_name = value
-                    if not spec.output_file: spec.output_file = f"{value}.output"
-                    if not spec.error_file: spec.error_file = f"{value}.error"
+                    if not spec.output_file:
+                        spec.output_file = f"{value}.output"
+                    if not spec.error_file:
+                        spec.error_file = f"{value}.error"
                 elif key == "o":
                     spec.output_file = value
                 elif key == "e":
@@ -285,13 +288,13 @@ class CobaltTransformer(TransformerBase):
                 elif key == "M":
                     spec.mail_user = value
                 elif key == "notify" and value == "user":
-                    spec.mail_type = ["ALL"] # Simple mapping
+                    spec.mail_type = ["ALL"]  # Simple mapping
                 elif key == "env":
-                     env_key, env_val = value.split("=", 1)
-                     spec.environment[env_key] = env_val
+                    env_key, env_val = value.split("=", 1)
+                    spec.environment[env_key] = env_val
                 else:
                     not_handled.add(key)
-        
+
         # We again assume a block of text here.
         if script_body:
             spec.script = script_body
@@ -315,7 +318,7 @@ class CobaltTransformer(TransformerBase):
                     temp_args.pop(idx)
                     temp_args.pop(idx)
             except (ValueError, IndexError):
-                pass # Ignore if parsing aprun fails
+                pass  # Ignore if parsing aprun fails
 
             if temp_args:
                 spec.executable = temp_args[0]

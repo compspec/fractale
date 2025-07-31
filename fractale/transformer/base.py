@@ -78,13 +78,13 @@ class Script:
 
         # Determine if it's a short (-n) or long (--tasks) option
         prefix = "-" if len(name) == 1 else "--"
-        self.script_lines.append(f"{self.directive}: {prefix}{name}={value}")
+        self.script_lines.append(f"{self.directive} {prefix}{name}={value}")
 
     def add_flag(self, name: str):
         """
         Add a boolean flag (e.g., --exclusive).
         """
-        self.script_lines.append(f"{self.directive}: --{name}")
+        self.script_lines.append(f"{self.directive} --{name}")
 
     def render(self) -> str:
         """

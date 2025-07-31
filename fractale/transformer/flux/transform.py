@@ -1,3 +1,7 @@
+import re
+import shlex
+from typing import Optional
+
 from fractale.logger.generate import JobNamer
 from fractale.transformer.base import Script, TransformerBase
 from fractale.transformer.flux.validate import Validator
@@ -15,22 +19,15 @@ def priority_to_flux_priority(class_name):
     numerical priority value. This is the reverse of map_numeric_priority_to_class_name.
     """
     # Define the mapping from the string class back to a representative number.
-    mapping = {
-        "low": 15,
-        "normal": 16,
-        "high": 50,
-        "urgent": 100,
-    }
+    mapping = {"low": 15, "normal": 16, "high": 50, "urgent": 100}
+
     # If we don't get it, default to Flux's default
     return mapping.get(class_name, 16)
 
 
 class FluxTransformer(TransformerBase):
     """
-    A Flux Transformer is a very manual way to transform a subsystem into
-    a batch script. I am not even using jinja templates, I'm just
-    parsing the subsystems in a sort of manual way. This a filler,
-    and assuming that we will have an LLM that can replace this.
+    A Flux Transformer for converting a generic JobSpec into a Flux batch script.
     """
 
     def _parse(self, jobspec, return_unhandled=False):
@@ -97,6 +94,10 @@ class FluxTransformer(TransformerBase):
         script.add("c", spec.cpus_per_task if spec.cpus_per_task > 1 else None)
         script.add("gpus-per-task", spec.gpus_per_task if spec.gpus_per_task > 0 else None)
 
+        # Add a constraint for the specific GPU type, if provided
+        # We could probably add gpu_type to requires if an admin configures it,
+        # but it's too risky.
+
         # Scheduling Directives
         if spec.exclusive_access:
             script.add_flag("exclusive")
@@ -106,7 +107,7 @@ class FluxTransformer(TransformerBase):
         script.add("t", spec.wall_time)
 
         flux_prio = priority_to_flux_priority(spec.priority)
-        if flux_prio != 0:
+        if flux_prio != 16:
             script.add("urgency", flux_prio)
         script.newline()
 

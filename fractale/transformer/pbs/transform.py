@@ -148,16 +148,21 @@ class PBSTransformer(TransformerBase):
         # Resource Selection (-l)
         select_parts = []
         if spec.num_nodes > 0:
-            select_parts.append(f"select={spec.num_nodes}")
+            # Build the select statement parts
+            node_spec = [f"select={spec.num_nodes}"]
+            if spec.cpus_per_task > 1:
+                node_spec.append(f"ncpus={spec.cpus_per_task}")
+            if spec.gpus_per_task > 0:
+                node_spec.append(f"ngpus={spec.gpus_per_task}")
+            # I am not clear difference between gpus and accelerators
+            # but this seems supported - would need to test
+            if spec.gpu_type:
+                node_spec.append(f"accelerator_type={spec.gpu_type}")
+            # mpiprocs is often used to specify total tasks, which works well with our spec
+            if spec.num_tasks > 1:
+                node_spec.append(f"mpiprocs={spec.num_tasks}")
 
-        # mpiprocs is often used to specify total tasks, which works well with our spec
-        if spec.num_tasks > 1:
-            select_parts.append(f"mpiprocs={spec.num_tasks}")
-
-        if spec.cpus_per_task > 1:
-            select_parts.append(f"ncpus={spec.cpus_per_task}")
-        if spec.gpus_per_task > 0:
-            select_parts.append(f"ngpus={spec.gpus_per_task}")
+            select_parts.append(":".join(node_spec))
 
         # PBS memory format often includes units like gb or mb
         if spec.mem_per_task:
@@ -167,7 +172,7 @@ class PBSTransformer(TransformerBase):
                 mem_val += "b"
             select_parts.append(f"mem={mem_val}")
 
-        resource_str = ":".join(select_parts)
+        resource_str = ",".join(select_parts)
 
         wt = seconds_to_pbs(spec.wall_time)
         if wt:
@@ -289,7 +294,7 @@ class PBSTransformer(TransformerBase):
                         if k == "walltime":
                             spec.wall_time = pbs_time_to_seconds(v)
                         elif k == "select":
-                            # select=N:ncpus=C:mpiprocs=T...
+                            # select=N:ncpus=C:mpiprocs=T:gpu_type=a100...
                             select_parts = v.split(":")
                             spec.num_nodes = int(select_parts[0])
                             for sp in select_parts[1:]:
@@ -298,6 +303,8 @@ class PBSTransformer(TransformerBase):
                                     spec.cpus_per_task = int(sv)
                                 elif sk == "ngpus":
                                     spec.gpus_per_task = int(sv)
+                                elif sk == "gpu_type":
+                                    spec.gpu_type = sv
                                 elif sk == "mem":
                                     spec.mem_per_task = sv.upper().replace("B", "")
                                 elif sk == "mpiprocs":

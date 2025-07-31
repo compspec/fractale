@@ -160,8 +160,15 @@ class LSFTransformer(TransformerBase):
 
         # Build the complex -R "select[...] span[...] rusage[...]" string
         r_parts = []
-        if spec.constraints:
-            r_parts.append(f'select[{":".join(spec.constraints)}]')
+
+        # Handle select criteria, including GPU type
+        select_criteria = list(spec.constraints)
+
+        # I'm not sure this would actually work
+        if spec.gpu_type:
+            select_criteria.append(spec.gpu_type)
+        if select_criteria:
+            r_parts.append(f'select[{":".join(select_criteria)}]')
 
         if spec.num_nodes > 1 and spec.num_tasks > 0:
             tasks_per_node = spec.num_tasks // spec.num_nodes
@@ -252,6 +259,9 @@ class LSFTransformer(TransformerBase):
         command_lines = []
         not_handled = set()
 
+        # Heuristic list of common GPU names to identify as gpu_type
+        known_gpu_types = {"a100", "v100", "h100", "a30", "a40", "mi250"}
+
         for line in content.splitlines():
             if not line.strip():
                 continue
@@ -314,7 +324,13 @@ class LSFTransformer(TransformerBase):
                         if spec.num_tasks > 0 and tasks_per_node > 0:
                             spec.num_nodes = spec.num_tasks // tasks_per_node
                     if select_match:
-                        spec.constraints.extend(select_match.group(1).split(":"))
+                        criteria = select_match.group(1).split(":")
+                        for criterion in criteria:
+                            # If a criterion is a known GPU type, set it and move on
+                            if criterion.lower() in known_gpu_types:
+                                spec.gpu_type = criterion
+                            else:
+                                spec.constraints.append(criterion)
                 else:
                     not_handled.add(key)
                 continue

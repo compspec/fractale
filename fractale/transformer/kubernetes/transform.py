@@ -10,6 +10,7 @@ from fractale.transformer.common import JobSpec
 
 # Assume GPUs are NVIDIA
 gpu_resource_name = "nvidia.com/gpu"
+gpu_product_label = "nvidia.com/gpu.product"
 
 
 def normalize_cpu_request(cpus: int) -> str:
@@ -37,7 +38,7 @@ def normalize_memory_request(mem_str):
     return mem_str
 
 
-def parse_memory(self, mem_str: str) -> str:
+def parse_memory(mem_str: str) -> str:
     """
     Converts K8s memory (e.g., 1Gi) to JobSpec format (e.g., 1G).
     """
@@ -53,7 +54,7 @@ def parse_memory(self, mem_str: str) -> str:
     return mem_str
 
 
-def parse_cpu(self, cpu_str: str) -> int:
+def parse_cpu(cpu_str: str) -> int:
     """
     Converts K8s CPU string to an integer. Assumes no millicores.
     """
@@ -125,12 +126,14 @@ class KubernetesTransformer(TransformerBase):
         if spec.environment:
             container["env"] = [{"name": k, "value": v} for k, v in spec.environment.items()]
 
+        # This is the spec for the pod template
+        template_pod_spec = {"containers": [container], "restartPolicy": "Never"}
         pod_spec = {
             "apiVersion": "batch/v1",
             "kind": "Job",
             "metadata": {"name": job_name},
             "spec": {
-                "template": {"spec": {"containers": [container], "restartPolicy": "Never"}},
+                "template": {"spec": template_pod_spec},
                 "backoffLimit": 0,
             },
         }
@@ -158,7 +161,7 @@ class KubernetesTransformer(TransformerBase):
         job_spec = {
             "parallelism": spec.num_nodes,
             "completions": spec.num_nodes,
-            "backoffLimit": 4,  # A sensible default
+            "backoffLimit": 4,
             "template": {"metadata": {"labels": {"job-name": spec.job_name}}, "spec": pod_spec},
         }
 
@@ -240,6 +243,11 @@ class KubernetesTransformer(TransformerBase):
             spec.num_tasks = cpu_val
             if cpu_val == 1:
                 spec.cpus_per_task = 1
+
+        # GPU Type from Node Selector
+        node_selector = pod_spec.get("nodeSelector", {})
+        if gpu_product_label in node_selector:
+            spec.gpu_type = node_selector[gpu_product_label]
 
         # Scheduling
         if pod_spec.get("priorityClassName"):

@@ -154,9 +154,12 @@ class CobaltTransformer(TransformerBase):
             )
             qsub_cmd.extend(["--dependencies", dep_str])
 
-        # Node constraints are handled by --attrs
-        if spec.constraints:
-            qsub_cmd.extend(["--attrs", ":".join(spec.constraints)])
+        # Node constraints and GPU type are handled by --attrs
+        attrs = list(spec.constraints)
+        if spec.gpu_type:
+            attrs.append(f"gpu_type={spec.gpu_type}")
+        if attrs:
+            qsub_cmd.extend(["--attrs", ":".join(attrs)])
 
         # -O sets the prefix for output/error files, which is derived from the job name.
         qsub_cmd.extend(["-O", job_name])
@@ -284,7 +287,11 @@ class CobaltTransformer(TransformerBase):
                 elif key == "dependencies":
                     spec.depends_on = value.split(":")
                 elif key == "attrs":
-                    spec.constraints = value.split(":")
+                    for attr in value.split(":"):
+                        if attr.startswith("gpu_type="):
+                            spec.gpu_type = attr.split("=", 1)[1]
+                        else:
+                            spec.constraints.append(attr)
                 elif key == "M":
                     spec.mail_user = value
                 elif key == "notify" and value == "user":

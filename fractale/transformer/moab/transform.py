@@ -1,6 +1,6 @@
 import re
 import shlex
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import fractale.utils as utils
 from fractale.logger.generate import JobNamer
@@ -169,8 +169,19 @@ class MoabTransformer(TransformerBase):
 
         # Resource Requests
         resource_parts = []
-        if spec.num_nodes and spec.cpus_per_task:
-            resource_parts.append(f"nodes={spec.num_nodes}:ppn={spec.cpus_per_task}")
+        node_spec = []
+        if spec.num_nodes:
+            node_spec.append(f"nodes={spec.num_nodes}")
+        if spec.cpus_per_task:
+            node_spec.append(f"ppn={spec.cpus_per_task}")
+        if spec.gpus_per_task > 0:
+            node_spec.append(f"gpus={spec.gpus_per_task}")
+        if spec.gpu_type:
+            # Add gpu type as a feature request
+            node_spec.append(spec.gpu_type)
+
+        if node_spec:
+            resource_parts.append(":".join(node_spec))
 
         if spec.generic_resources:
             resource_parts.append(f"gres={spec.generic_resources}")
@@ -307,15 +318,26 @@ class MoabTransformer(TransformerBase):
         for part in shlex.split(full_l_string):
 
             # Split combined node:ppn requests first
-            if "nodes" in part and ":" in part:
+            if ":" in part:
+                node_features = []
                 for subpart in part.split(":"):
                     if "=" not in subpart:
+                        # This is a feature request, like "gtx1080"
+                        node_features.append(subpart)
                         continue
+
                     k, v = subpart.split("=", 1)
                     if k == "nodes":
                         spec.num_nodes = int(v)
                     elif k == "ppn":
                         spec.cpus_per_task = int(v)
+                    elif k == "gpus":
+                        spec.gpus_per_task = int(v)
+
+                # Heuristic: If we found GPUs and other features, assume the first
+                # other feature is the gpu_type.
+                if spec.gpus_per_task > 0 and node_features:
+                    spec.gpu_type = node_features[0]
 
             elif "=" in part:
                 k, v = part.split("=", 1)
@@ -329,7 +351,7 @@ class MoabTransformer(TransformerBase):
                     spec.num_tasks = int(v)
                 elif k == "mem":
                     spec.mem_per_task = v
-                elif k == "gres" or k == "gpus":
+                elif k == "gres":
                     spec.generic_resources = v
                 elif k == "depend":
                     spec.depends_on = v

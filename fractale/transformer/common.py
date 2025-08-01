@@ -1,4 +1,3 @@
-import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
 
@@ -32,6 +31,7 @@ class JobSpec:
     cpus_per_task: int = 1
     mem_per_task: Optional[str] = None
     gpus_per_task: int = 0
+    gpu_type: Optional[str] = None
 
     # Scheduling and Constraints
     wall_time: Optional[int] = None

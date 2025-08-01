@@ -182,6 +182,10 @@ class OARTransformer(TransformerBase):
             # This requests nodes that *each* have at least this many GPUs.
             l_parts.append(f"/gpunum={spec.gpus_per_task}")
 
+        # Add the specific GPU type as a resource property
+        if spec.gpu_type:
+            l_parts.append(f"/gpu_model='{spec.gpu_type}'")
+
         resource_str = "".join(l_parts)
 
         # Node constraints are added as properties to the resource string.
@@ -311,6 +315,8 @@ class OARTransformer(TransformerBase):
                                     spec.cpus_per_task = int(v)
                             elif k == "gpunum":
                                 spec.gpus_per_task = int(v)
+                            elif k == "gpu_model":
+                                spec.gpu_type = v.strip("'")
                         else:
                             # Assume parts without '=' are constraints
                             spec.constraints.append(part.strip().strip("'"))

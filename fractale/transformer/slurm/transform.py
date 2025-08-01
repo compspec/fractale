@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import re
 import shlex
 from datetime import datetime, timedelta
@@ -166,10 +168,8 @@ class SlurmTransformer(TransformerBase):
         Convert a normalized jobspec to a Slurm batch script.
         """
         script = SlurmScript()
-
-        # If we don't have a job name, generate one
-        job_name = spec.job_name or JobNamer().generate()
-        script.add("job-name", job_name)
+        if spec.job_name:
+            script.add("job-name", spec.job_name)
 
         # Job Identity & Accounting
         script.add("account", spec.account)
@@ -187,7 +187,10 @@ class SlurmTransformer(TransformerBase):
         script.add("ntasks", spec.num_tasks)
         script.add("cpus-per-task", spec.cpus_per_task)
         if spec.gpus_per_task and spec.gpus_per_task > 0:
-            script.add("gpus-per-task", spec.gpus_per_task)
+            if spec.gpu_type:
+                script.add("gres", f"gpu:{spec.gpu_type}:{spec.gpus_per_task}")
+            else:
+                script.add("gpus-per-task", spec.gpus_per_task)
         elif spec.generic_resources:
             script.add("gres", spec.generic_resources)
 
@@ -200,7 +203,9 @@ class SlurmTransformer(TransformerBase):
 
         # Scheduling and Constraints
         script.add("time", seconds_to_slurm_time(spec.wall_time))
-        script.add("partition", spec.queue)
+
+        # Disable partition for now - can't map to another cluster and get a match
+        # script.add("partition", spec.queue)
 
         # The 'nice' value in Slurm influences the job's priority.
         # A higher value means lower priority. This is an imperfect mapping.
@@ -238,8 +243,9 @@ class SlurmTransformer(TransformerBase):
         if spec.exclude_nodes:
             script.add("exclude", spec.exclude_nodes)
 
-        if spec.licenses:
-            script.add("licenses", spec.licenses)
+        # Not sure how these would map.
+        # if spec.licenses:
+        #    script.add("licenses", spec.licenses)
 
         # Dependencies
         if spec.depends_on:
@@ -384,8 +390,25 @@ class SlurmTransformer(TransformerBase):
                         spec.cpus_per_task = int(value)
                     elif key == "gpus-per-task":
                         spec.gpus_per_task = int(value)
-                    elif key in ("gres", "gpus"):
-                        spec.generic_resources = value
+                    elif key == "gpus":
+                        # Handles --gpus=a100:1 or --gpus=2
+                        parts = value.split(":")
+                        if len(parts) == 1 and parts[0].isdigit():
+                            spec.gpus_per_task = int(parts[0])
+                        elif len(parts) == 2:
+                            spec.gpu_type = parts[0]
+                            spec.gpus_per_task = int(parts[1])
+                    elif key == "gres":
+                        if "gpu" in value:
+                            # Handles --gres=gpu:a100:2 or --gres=gpu:2
+                            parts = value.split(":")
+                            if len(parts) == 2:  # gpu:2
+                                spec.gpus_per_task = int(parts[1])
+                            elif len(parts) == 3:  # gpu:a100:2
+                                spec.gpu_type = parts[1]
+                                spec.gpus_per_task = int(parts[2])
+                        else:
+                            spec.generic_resources = value
                     elif key in ("mem-per-cpu", "mem"):
                         spec.mem_per_task = value
                     elif key in ("p", "q", "partition", "paritition", "part"):

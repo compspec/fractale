@@ -8,6 +8,7 @@ from compspec.plugin.parser import plugin_registry
 from compspec.plugin.registry import PluginRegistry
 
 import fractale
+import fractale.agent.parser as parsers
 import fractale.defaults as defaults
 from fractale.logger import setup_logger
 
@@ -59,9 +60,6 @@ def get_parser():
     )
     subparsers.add_parser("version", description="show software version")
 
-    # This will do the subsystem match before the run
-    #    parser.add_argument("name", help="name of subsystem (required)")
-
     # Generate subsystem metadata for a cluster
     # fractale generate-subsystem --cluster A spack <args>
     generate = subparsers.add_parser(
@@ -70,6 +68,20 @@ def get_parser():
         description="generate subsystem metadata for a cluster",
     )
     generate.add_argument("-c", "--cluster", help="cluster name")
+
+    # Run an agent
+    agent = subparsers.add_parser(
+        "agent",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="run an agent",
+    )
+    agents = agent.add_subparsers(
+        title="agent",
+        description="Run an agent",
+    )
+
+    # Add agent parsers
+    parsers.register(agents)
 
     # Transform jobspecs from flux to Kubernetes (starting specific)
     transform = subparsers.add_parser(
@@ -184,7 +196,9 @@ def run_fractale():
     )
 
     # Here we can assume instantiated to get args
-    if args.command == "generate":
+    if args.command == "agent":
+        from .agent import main
+    elif args.command == "generate":
         from .generate_subsystem import main
     elif args.command == "satisfy":
         from .satisfy import main

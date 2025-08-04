@@ -66,6 +66,7 @@ if __name__ == "__main__":
     INSTALL_REQUIRES = get_reqs(lookup)
     TESTS_REQUIRES = get_reqs(lookup, "TESTS_REQUIRES")
     INSTALL_REQUIRES_ALL = get_reqs(lookup, "INSTALL_REQUIRES_ALL")
+    AGENT_REQUIRES = get_reqs(lookup, "AGENT_REQUIRES")
 
     setup(
         name=NAME,
@@ -87,6 +88,7 @@ if __name__ == "__main__":
         tests_require=TESTS_REQUIRES,
         extras_require={
             "all": [INSTALL_REQUIRES_ALL],
+            "agent": [AGENT_REQUIRES],
         },
         classifiers=[
             "Intended Audience :: Science/Research",

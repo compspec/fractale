@@ -1,0 +1,1 @@
+environment = "generic cloud environment"

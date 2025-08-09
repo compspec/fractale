@@ -1,6 +1,7 @@
 from fractale.agent.base import Agent
 import fractale.agent.build.prompts as prompts
 from fractale.agent.context import get_context
+import fractale.agent.defaults as defaults
 
 import fractale.utils as utils
 import argparse
@@ -64,11 +65,6 @@ class BuildAgent(Agent):
     def run(self, context):
         """
         Run the agent.      
-
-        TODO: get working here
-        Then think about how to move between steps. We will want to be able to
-        get initial variables from a plan for redoing steps.  OR keep the last
-        state of running it.
         """
         import google.generativeai as genai
 
@@ -79,7 +75,7 @@ class BuildAgent(Agent):
         self.attempts = self.attempts or 0
 
         # Map context into needed arguments and validate
-        environment = context.get('environment', "generic cloud environment")        
+        environment = context.get('environment', defaults.environment)  
         application = context.get('application', required=True)
 
         # These are optional if we are doing a follow up build
@@ -94,7 +90,7 @@ class BuildAgent(Agent):
         # This will either generate fresh or rebuild erroneous Dockerfile
         # We don't return the dockerfile because it is updated in the context
         context.dockerfile = self.generate_dockerfile(
-            context.application, context.environment, error_message=error_message, dockerfile=dockerfile
+            context.application, environment, error_message=error_message, dockerfile=dockerfile
         )
         print(Panel(context.dockerfile, title="[green]Dockerfile[/green]", border_style="green"))
 
@@ -183,7 +179,7 @@ class BuildAgent(Agent):
         utils.write_file(dockerfile, os.path.join(build_dir, "Dockerfile"))
         print(
             Panel(
-                f"Attempt {self.attempts} to build image: [bold cyan]{image_name}[/bold cyan]",
+                f"Attempt {self.attempts+1} to build image: [bold cyan]{image_name}[/bold cyan]",
                 title="[blue]Docker Build[/blue]",
                 border_style="blue",
             )

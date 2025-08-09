@@ -18,4 +18,5 @@ def main(args, extra, **kwargs):
     agent = agents[args.agent_name]()
 
     # This is built and tested! We can do something with it :)
-    agent.run(args, extra)
+    # Note that vars converts the argparse arguments into a dictionary
+    agent.run(vars(args))

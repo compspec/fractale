@@ -2,9 +2,11 @@ class Agent:
     """
     A base for an agent
     """
-
     # name and description should be on the class
 
+    def __init__(self):   
+        self.attempts = None
+        
     def add_arguments(self, subparser):
         """
         Add arguments for the agent to show up in argparse

@@ -9,13 +9,48 @@ This library is primarily being used for development for the descriptive thrust 
 
 ## Design
 
-### Simple
+### Agents
+
+The `fractale agent` command provides means to run build, job generation, and deployment agents.
+This part of the library is under development.
+
+See [examples/agent](examples/agent) for an example.
+
+#### To do items
+
+- Get basic runner working
+- Add in ability to get log and optimize - the manager will need to use goal
+- We likely want the manager to be able to edit the prompt.
+ - should be provided with entire prompt?
+- When pod pending, it can be due to resource issues (and will never start). Right now we will time out, but we should be able to catch that earlier.
+
+#### Research Questions
+
+**And experiment ideas**
+
+- What are the increments of change (e.g., "adding a library")? We should be able to keep track of times for each stage and what changed, and an analyzer LLM can look at result and understand (categorize) most salient contributions to change.
+  - We also can time the time it takes to do subsequent changes, when relevant. For example, if we are building, we should be able to use cached layers (and the build times speed up) if the LLM is changing content later in the Dockerfile.
+- We can also save the successful results (Dockerfile builds, for example) and compare for similarity. How consistent is the LLM?
+- How does specificity of the prompt influence the result?
+- For an experiment, we would want to do a build -> deploy and successful run for a series of apps and get distributions of attempts, reasons for failure, and a general sense of similarity / differences.
+- For the optimization experiment, we'd want to do the same, but understand gradients of change that led to improvement.
+
+## Observations
+
+- Specifying cpu seems important - if you don't it wants to do GPU
+- If you ask for a specific example, it sometimes tries to download data (tell it where data is)
+- Always include common issues in the initial prompt
+- If you are too specific about instance types, it adds node selectors/affinity, and that often doesn't work.
+
+### Job Specifications
+
+#### Simple
 
 We provide a simple translation layer between job specifications. We take the assumption that although each manager has many options, the actual options a user would use is a much smaller set, and it's relatively straight forward to translate (and have better accuracy).
 
 See [examples/transform](examples/transform) for an example.
 
-### Complex
+#### Complex
 
 We want to:
 
@@ -31,12 +66,6 @@ For graph tool:
 ```bash
 conda install -c conda-forge graph-tool
 ```
-
-## Questions
-
-- Should other subsystem types have edges? How used?
-- Should we try to map them to nodes in the graph or use another means (or assume global across cluster nodes as we do now)?
-- Can we simplify spack subsystem graph (it's really big...)
 
 <!-- ⭐️ [Documentation](https://compspec.github.io/fractale) ⭐️ -->
 

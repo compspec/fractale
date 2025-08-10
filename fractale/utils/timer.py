@@ -1,5 +1,6 @@
 import time
 
+
 class Timer:
     """
     A context timer! You can use in context OR explicitly start/stop.
@@ -7,6 +8,7 @@ class Timer:
     with t:
        do_stuff()
     """
+
     def __enter__(self):
         self.start()
         return self
@@ -20,4 +22,3 @@ class Timer:
 
     def start(self):
         self.start_time = time.perf_counter()
-

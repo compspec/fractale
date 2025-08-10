@@ -1,0 +1,23 @@
+name: Build and Deploy LAMMPS
+description: Build a Docker container and deploy it as a Kubernetes Job.
+plan:
+- agent: build
+  context:
+    environment: "google cloud CPU instance in Kubernetes"
+    application: lammps
+    details: |
+      Please build the with reaxff HNS example located in examples/reaxff/HNS.
+      Make sure to keep the full content of that directory as is, and
+      the target file is named in.reaxff.hns. To make it easy for the
+      next agent, please make the working directory where the data is
+      located.
+
+- agent: kubernetes-job
+  context:
+    no_pull: true
+    environment: "google cloud CPU instance in Kubernetes" 
+    details: |
+      Please execute the reaxff HNS example, and assume the data in the PWD,
+      Run lammpss with params -v x 2 -v y 2 -v z 2 -in ./in.reaxff.hns
+      and with -nocite flag for CPU. Do not try to generate configmap data.
+      Do not add any nodeSelector or affinity rules since we are testing.

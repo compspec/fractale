@@ -10,6 +10,10 @@ def main(args, extra, **kwargs):
     """
     agents = get_agents()
 
+    # If we have a plan, we run the manager.
+    if args.plan is not None:
+        args.agent_name = "manager"
+
     # Right now we only have a build agent :)
     if args.agent_name not in agents:
         sys.exit(f"{args.agent_name} is not a recognized agent.")

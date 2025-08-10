@@ -79,6 +79,12 @@ def get_parser():
         title="agent",
         description="Run an agent",
     )
+    agent.add_argument(
+        "--plan",
+        "-p",
+        dest="plan",
+        help="provide a plan to a manager",
+    )
 
     # Add agent parsers
     parsers.register(agents)

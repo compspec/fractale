@@ -25,33 +25,27 @@ common_instructions = """- Optimize for performance using best practices, especi
 - Don't worry about users/permissions - just be root.
 """
 
+
+# TODO: do we want to add back common instructions here?
 rebuild_prompt = (
-    f"""Act as a Dockerfile builder service expert. I am trying to build a Docker image named for the application '%s' in an environment for '%s'. The previous attempt to build or run the Dockerfile failed. Here is the problematic Dockerfile:
+    f"""Your previous Dockerfile build has failed. Here is instruction for how to fix it.
 
-```dockerfile
-%s
-```
-
-Here is the error message I received:
-```
-%s
-```
-
-Please analyze the error and the Dockerfile, and provide a corrected version.
+Please analyze the instruction and your previous Dockerfile, and provide a corrected version.
 - The response should only contain the complete, corrected Dockerfile inside a single markdown code block.
-- Use succinct comments in the Dockerfile to explain build logic and changes.
+- Use succinct comments in the Dockerfile to explain build logic and changes. 
+- Follow the same guidelines as previously instructed.
+
+%s
 """
-    + common_instructions
 )
 
 
 def get_rebuild_prompt(context):
-    environment = context.get("environment", defaults.environment)
-    application = context.get("application", required=True)
-    return prompt_wrapper(
-        rebuild_prompt % (application, environment, context.dockerfile, context.error_message),
-        context=context,
-    )
+    """
+    The rebuild prompt will either be the entire error output, or the parsed error
+    output with help from the agent manager.
+    """
+    return prompt_wrapper(rebuild_prompt % context.error_message, context=context)
 
 
 build_prompt = (

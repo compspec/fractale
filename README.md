@@ -28,6 +28,7 @@ See [examples/agent](examples/agent) for an example.
 
 **And experiment ideas**
 
+- How do we define stability? 
 - What are the increments of change (e.g., "adding a library")? We should be able to keep track of times for each stage and what changed, and an analyzer LLM can look at result and understand (categorize) most salient contributions to change.
   - We also can time the time it takes to do subsequent changes, when relevant. For example, if we are building, we should be able to use cached layers (and the build times speed up) if the LLM is changing content later in the Dockerfile.
 - We can also save the successful results (Dockerfile builds, for example) and compare for similarity. How consistent is the LLM?

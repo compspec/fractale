@@ -1,6 +1,8 @@
 import jsonschema
 from jsonschema import validators
+from fractale.agent.context import get_context
 from rich import print
+import copy 
 
 import fractale.utils as utils
 
@@ -131,6 +133,12 @@ class Step:
                 context[k] = v
         return context
 
+    def get_initial_prompt(self, context):
+        """
+        More easily expose the get_initial_prompt function on the agent.
+        """
+        return self._agent.get_initial_prompt(context)
+    
     def execute(self, context):
         """
         Execute a plan step (associated with an agent)
@@ -150,11 +158,6 @@ class Step:
     @property
     def context(self):
         return self.get("context")
-
-    # STOPPED HERE:
-    # each of the step and the manager have a context. We need to update at some
-    # point so there is one context. It isn't clear if the manager should do this
-    # and then carry forward logic to a subsequent step, or something else.
 
     @property
     def attempts(self):

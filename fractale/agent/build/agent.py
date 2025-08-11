@@ -41,13 +41,6 @@ class BuildAgent(Agent):
         model = genai.GenerativeModel("gemini-2.5-pro")
         self.chat = model.start_chat()
 
-    def requires(self):
-        """
-        Each agent has a requires function to tell the manager what
-        they do and what is required in the context to run them.
-        """
-        return prompts.requires
-
     def add_arguments(self, subparser):
         """
         Add arguments for the plugin to show up in argparse
@@ -125,7 +118,11 @@ class BuildAgent(Agent):
         # This will either generate fresh or rebuild erroneous Dockerfile
         # We don't return the dockerfile because it is updated in the context
         self.generate_dockerfile(context)
-        print(Panel(context.dockerfile, title="[green]Dockerfile[/green]", border_style="green"))
+        print(Panel(context.dockerfile, title="[green]Dockerfile or Response[/green]", border_style="green"))
+
+        # Set the container on the context for a next step to use it...
+        container = context.get("container") or self.generate_name(context.application)
+        context.container = container
 
         # Build it! We might want to only allow a certain number of retries or incremental changes.
         return_code, output = self.build(context)
@@ -170,7 +167,7 @@ class BuildAgent(Agent):
         """
         Return either the entire context or single result.
         """
-        if context.get("managed") is True:
+        if context.is_managed:
             return context
         return context.dockerfile
 
@@ -216,10 +213,6 @@ class BuildAgent(Agent):
         Build the Dockerfile! Yolo!
         """
         dockerfile = context.get("dockerfile")
-        image_name = context.get("container") or self.generate_name(context.application)
-
-        # Set the container on the context for follow up steps.
-        context.container = image_name
 
         # Not sure if this can happen, assume it can
         if not dockerfile:
@@ -230,17 +223,20 @@ class BuildAgent(Agent):
 
         # Write the Dockerfile to the temporary directory
         utils.write_file(dockerfile, os.path.join(build_dir, "Dockerfile"))
-        print(
-            Panel(
-                f"Attempt {self.attempts} to build image: [bold cyan]{image_name}[/bold cyan]",
-                title="[blue]Docker Build[/blue]",
-                border_style="blue",
+        
+        # If only one max attempt, don't print here, not important to show.
+        if self.max_attempts is not None and self.max_attempts > 1:
+            print(
+                Panel(
+                    f"Attempt {self.attempts} to build image: [bold cyan]{context.container}[/bold cyan]",
+                    title="[blue]Docker Build[/blue]",
+                    border_style="blue",
+                )
             )
-        )
 
         # Run the build process using the temporary directory as context
         p = subprocess.run(
-            ["docker", "build", "--network", "host", "-t", image_name, "."],
+            ["docker", "build", "--network", "host", "-t", context.container, "."],
             capture_output=True,
             text=True,
             cwd=build_dir,
@@ -259,18 +255,12 @@ class BuildAgent(Agent):
         print(textwrap.indent(prompt, "> ", predicate=lambda _: True))
 
         # The API can error and not return a response.text.
-        response = self.ask_gemini(prompt)
+        content = self.ask_gemini(prompt)
         print("Received Dockerfile response from Gemini...")
 
         # Try to remove Dockerfile from code block
         try:
-            content = response.text.strip()
-            if content.startswith("```dockerfile"):
-                content = content[len("```dockerfile") :]
-            if content.startswith("```"):
-                content = content[len("```") :]
-            if content.endswith("```"):
-                content = content[: -len("```")]
+            content = self.get_code_block(content, 'dockerfile')
 
             # If we are getting commentary...
             match = re.search(dockerfile_pattern, content, re.DOTALL)
@@ -283,4 +273,4 @@ class BuildAgent(Agent):
             context.dockerfile = dockerfile
             context.result = dockerfile
         except Exception as e:
-            sys.exit(f"Error parsing response from Gemini: {e}\n{response.text}")
+            sys.exit(f"Error parsing response from Gemini: {e}\n{content}")

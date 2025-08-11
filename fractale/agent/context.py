@@ -32,8 +32,14 @@ class Context(collections.UserDict):
         """
         Reset the return code and result.
         """
-        for key in ["return_code", "result"]:
+        for key in ["return_code", "result", "error_message"]:
             self.data[key] = None
+
+    def is_managed(self):
+        """
+        Is the context being managed?
+        """
+        return self.get("managed") is True
 
     def __getattribute__(self, name):
         """

@@ -14,7 +14,6 @@ from rich import print
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-import fractale.agent.defaults as defaults
 import fractale.agent.kubernetes_job.prompts as prompts
 import fractale.utils as utils
 from fractale.agent.base import Agent
@@ -77,13 +76,6 @@ class KubernetesJobAgent(Agent):
         model = genai.GenerativeModel("gemini-2.5-pro")
         self.chat = model.start_chat()
 
-    def requires(self):
-        """
-        Each agent has a requires function to tell the manager what
-        they do and what is required in the context to run them.
-        """
-        return prompts.requires
-
     def get_prompt(self, context):
         """
         Get the prompt for the LLM. We expose this so the manager can take it
@@ -144,16 +136,31 @@ class KubernetesJobAgent(Agent):
             print("\n[bold cyan] Requesting Correction from Kubernetes Job Agent[/bold cyan]")
             self.attempts += 1
 
+            # Return early based on max attempts
+            if self.return_on_failure():
+                context.return_code = -1
+                context.result = output
+                return self.get_result(context)
+
             # Trigger again, provide initial context and error message
+            # This is the internal loop running, no manager agent
             context.error_message = output
             context.job_crd = job_crd
             return self.run(context)
 
         self.write_file(context, job_crd)
         self.print_crd(job_crd)
-        if context.get("managed") is True:
+        return self.get_result(context)
+
+
+    def get_result(self, context):
+        """
+        Return either the entire context or single result.
+        """
+        if context.is_managed:
             return context
-        return job_crd
+        return context.job_crd
+
 
     def print_crd(self, job_crd):
         """
@@ -424,7 +431,7 @@ class KubernetesJobAgent(Agent):
         shutil.rmtree(deploy_dir, ignore_errors=True)
         return (0, "Success")
 
-    def generate_crd(self, context, template=None):
+    def generate_crd(self, context):
         """
         Generates or refines an existing Job CRD using the Gemini API.
         """
@@ -432,18 +439,12 @@ class KubernetesJobAgent(Agent):
         print("Sending generation prompt to Gemini...")
         print(textwrap.indent(prompt, "> ", predicate=lambda _: True))
 
-        response = self.ask_gemini(prompt)
+        content = self.ask_gemini(prompt)
         print("Received response from Gemini...")
 
         # Try to remove Dockerfile from code block
         try:
-            content = response.text.strip()
-            if content.startswith("```yaml"):
-                content = content[len("```yaml") :]
-            if content.startswith("```"):
-                content = content[len("```") :]
-            if content.endswith("```"):
-                content = content[: -len("```")]
+            content = self.get_code_block(content, 'yaml')
 
             # If we are getting commentary...
             match = re.search(yaml_pattern, content, re.DOTALL)
@@ -455,4 +456,4 @@ class KubernetesJobAgent(Agent):
             return job_crd
 
         except Exception as e:
-            sys.exit(f"Error parsing response from Gemini: {e}\n{response.text}")
+            sys.exit(f"Error parsing response from Gemini: {e}\n{content}")

@@ -10,7 +10,7 @@ from fractale.agent.base import Agent
 from fractale.agent.context import Context
 from fractale.agent.manager.plan import Plan
 from fractale.utils.timer import Timer
-
+import fractale.agent.manager.prompts as prompts
 # In the case of multiple agents working together, we can use a manager.
 
 
@@ -20,6 +20,9 @@ class ManagerAgent(Agent):
     well defined, transitions between steps are up to the manager.
     The manager can initialize other agents at the order it decides.
     """
+
+    def init(self):
+        self.model = genai.GenerativeModel("gemini-1.5-pro")
 
     def get_recovery_step(self, context, failed_step, message):
         """
@@ -97,7 +100,6 @@ class ManagerAgent(Agent):
         plan = Plan(context.get("plan", required=True))
 
         # The manager model works as the orchestrator of work.
-        self.model = genai.GenerativeModel("gemini-1.5-pro")
         print(
             Panel(
                 f"Manager Initialized with Agents: [bold cyan]{plan.agent_names}[/bold cyan]",
@@ -148,7 +150,6 @@ class ManagerAgent(Agent):
             if step.agent not in attempts:
                 attempts[step.agent] = 0
 
-            # This is the external attempts (e.g., we allowed build to run N times)
             # Each time build runs, it has its own internal attempts counter.
             if step.reached_maximum_attempts(attempts[step.agent]):
                 print(f"[red]Agent '{step.agent}' has reached max attempts {step.attempts}.[/red]")
@@ -174,37 +175,36 @@ class ManagerAgent(Agent):
 
             # If we are successful, we go to the next step.
             # Not setting a return code indicates success.
-            return_code = context.get("return_code", 0)
+            return_code = context.get("return_code") or 0
             if return_code == 0:
                 print(f"[green]✅ Step successful.[/green]")
                 current_step_index += 1
+                context.reset()
 
             # If we reach max attempts and no success, we need to intervene
             else:
-                print('FAILRE - try to respond!')
-                import IPython 
-                IPython.embed()
-                message = context.get("result", "")
+                # This is the intiial (cleaned) prompt to give the manager context
+                instruction = step.get_initial_prompt(context)
+
+                # Give the error message to the manager to triage
+                prompt = prompts.get_retry_prompt(instruction, context.result)
+                response = self.ask_gemini(prompt, with_history=False)
                 print(
                     Panel(
-                        f"Step failed. Message:\n{message}",
-                        title=f"[red]❌ Step Failed: {step.agent}[/red]",
-                        border_style="re///d",
+                        f"Step failed. Instruction to agent:\n{context.result}",
+                        title=f"[red]❌ Manager Instruction: {step.agent}[/red]",
+                        border_style="red",
                         expand=False,
                     )
                 )
+                context.reset()
+                context.error_message = response
+                continue
+
+                # TODO: we eventually want to allow the LLM to choose a step                
                 # At this point we need to get a recovery step, and include the entire context
                 # up to that point.
                 recovery_step = self.get_recovery_step(context, step, message)
-
-                print("POST RECOVERY STEP")
-                # need to decide how to move about plan
-                # I don't think we sdhould insert, I think we should change the index instead.
-                # This assumes that steps have unique names.
-                import IPython
-
-                IPython.embed()
-
                 if recovery_step:
                     print(
                         Panel(
@@ -212,12 +212,14 @@ class ManagerAgent(Agent):
                             title="[yellow]Recovery Plan[/yellow]",
                         )
                     )
+                    # TODO this shouldn't be an insert, but a find and replace and then
+                    # updating of the index to supoprt that.
                     plan.insert(current_step_index, recovery_step)
                 else:
                     print("[red]Could not determine recovery step. Aborting workflow.[/red]")
                     break
 
-            # Reset the context for the next step.
+            # If successful, reset the context for the next step.
             # This resets return code and result only.
             context.reset()
 

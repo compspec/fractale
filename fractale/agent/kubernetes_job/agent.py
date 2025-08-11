@@ -336,7 +336,7 @@ class KubernetesJobAgent(Agent):
         if found_image != image_name:
             return (
                 1,
-                "Generated YAML has incorrect image name {found_image} - it should be {image_name}.",
+                f"Generated YAML has incorrect image name {found_image} - it should be {image_name}.",
             )
 
         deploy_dir = tempfile.mkdtemp()

@@ -5,6 +5,8 @@ plan:
   context:
     environment: "google cloud CPU instance in Kubernetes"
     application: lammps
+    # Testing max attempts for help from LLM manager
+    max_attempts: 1
     details: |
       Please build the with reaxff HNS example located in examples/reaxff/HNS.
       Make sure to keep the full content of that directory as is, and

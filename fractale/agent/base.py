@@ -36,6 +36,9 @@ class Agent:
         """
         On failure, have we reached max attempts and should return?
         """
+        print('CHECK')
+        import IPython
+        IPython.embed()
         if not self.max_attempts:
             return False
         return self.attempts > self.max_attempts

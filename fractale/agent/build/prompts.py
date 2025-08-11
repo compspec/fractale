@@ -26,7 +26,11 @@ common_instructions = """- Optimize for performance using best practices, especi
 """
 
 rebuild_prompt = (
-    f"""Your previous attempt to build or run the Dockerfile failed.
+    f"""Act as a Dockerfile builder service expert. I am trying to build a Docker image named for the application '%s' in an environment for '%s'. The previous attempt to build or run the Dockerfile failed. Here is the problematic Dockerfile:
+
+```dockerfile
+%s
+```
 
 Here is the error message I received:
 ```
@@ -44,11 +48,15 @@ Please analyze the error and the Dockerfile, and provide a corrected version.
 def get_rebuild_prompt(context):
     environment = context.get("environment", defaults.environment)
     application = context.get("application", required=True)
-    return prompt_wrapper(rebuild_prompt % context.error_message, context=context)
+    return prompt_wrapper(
+        rebuild_prompt % (application, environment, context.dockerfile, context.error_message),
+        context=context,
+    )
 
 
 build_prompt = (
-    f"""Act as a Dockerfile builder service expert. I need to create a Dockerfile for an application '%s'.
+    f"""Act as a Dockerfile builder service expert.
+I need to create a Dockerfile for an application '%s'.
 The target environment is '%s'.
 
 Please generate a robust, production-ready Dockerfile.

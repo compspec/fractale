@@ -181,6 +181,9 @@ class ManagerAgent(Agent):
 
             # If we reach max attempts and no success, we need to intervene
             else:
+                print('FAILRE - try to respond!')
+                import IPython 
+                IPython.embed()
                 message = context.get("result", "")
                 print(
                     Panel(

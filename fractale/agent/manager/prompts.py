@@ -14,9 +14,9 @@ Please return a response that speaks to the agent, and include your instruction 
 why it is an error.
 """
 
+
 def get_retry_prompt(instruction, prompt):
     """
     In testing, this should JUST be the error message.
     """
     return retry_prompt % (instruction, prompt)
-

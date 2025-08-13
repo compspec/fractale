@@ -2,27 +2,25 @@ import json
 import os
 import tempfile
 
-import google.generativeai as genai
 from rich import print
 from rich.panel import Panel
 
-from fractale.agent.base import Agent
+import fractale.agent.defaults as defaults
+import fractale.agent.manager.prompts as prompts
+from fractale.agent.base import GeminiAgent
 from fractale.agent.context import Context
 from fractale.agent.manager.plan import Plan
 from fractale.utils.timer import Timer
-import fractale.agent.manager.prompts as prompts
+
 # In the case of multiple agents working together, we can use a manager.
 
 
-class ManagerAgent(Agent):
+class ManagerAgent(GeminiAgent):
     """
     An LLM-powered agent that executes a plan. While the plan is fairly
     well defined, transitions between steps are up to the manager.
     The manager can initialize other agents at the order it decides.
     """
-
-    def init(self):
-        self.model = genai.GenerativeModel("gemini-1.5-pro")
 
     def get_recovery_step(self, context, failed_step, message):
         """
@@ -201,7 +199,7 @@ class ManagerAgent(Agent):
                 context.error_message = response
                 continue
 
-                # TODO: we eventually want to allow the LLM to choose a step                
+                # TODO: we eventually want to allow the LLM to choose a step
                 # At this point we need to get a recovery step, and include the entire context
                 # up to that point.
                 recovery_step = self.get_recovery_step(context, step, message)

@@ -10,7 +10,7 @@ The build agent will use the Gemini API to generate a Dockerfile and then build 
 Here is how to first ask the build agent to generate a lammps container for Google cloud.
 
 ```bash
-fractale agent build lammps --environment "google cloud" --outfile dockerfile
+fractale agent build lammps --environment "google cloud CPU" --outfile Dockerfile.lammps
 ```
 
 That might generate the [Dockerfile](Dockerfile) here, and a container that defaults to the application name "lammps"
@@ -27,7 +27,7 @@ kind load docker-image lammps
 To start, we will assume a kind cluster running and tell the agent the image is loaded into it (and so the pull policy will be never). 
 
 ```bash
-fractale agent kubernetes-job lammps --environment "google cloud CPU" --context-file ./Dockerfile --no-pull 
+fractale agent kubernetes-job lammps --environment "google cloud CPU" --context-file ./Dockerfile --no-pull
 ```
 
 ## Manager

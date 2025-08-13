@@ -1,7 +1,7 @@
-from fractale.agent.base import Agent
+from fractale.agent.base import GeminiAgent
 import fractale.agent.build.prompts as prompts
 from fractale.agent.context import get_context
-import fractale.agent.defaults as defaults
+from fractale.agent.errors import DebugAgent
 
 import fractale.utils as utils
 import argparse
@@ -18,28 +18,22 @@ import tempfile
 import subprocess
 import textwrap
 
-import google.generativeai as genai
 
 # regular expression in case LLM does not follow my instructions!
 dockerfile_pattern = r"```(?:dockerfile)?\n(.*?)```"
 
 
-class BuildAgent(Agent):
+class BuildAgent(GeminiAgent):
     """
     Builder agent.
+
+    Observations from v:
+    1. Holding the context (chat) seems to take longer.
+    2. Don't forget to ask for CPU - GPU will take a lot longer.
     """
 
     name = "build"
     description = "builder agent"
-
-    def init(self):
-        """
-        Custom initialization. I want to try using the same model
-        agent across requests. I'm not sure if that means it's the same
-        context (I don't think so).
-        """
-        model = genai.GenerativeModel("gemini-2.5-pro")
-        self.chat = model.start_chat()
 
     def add_arguments(self, subparser):
         """
@@ -102,6 +96,8 @@ class BuildAgent(Agent):
         1. Populate a context.
         2. Call supporting functions with the context.
         3. Parse the result and update context, taking appropriate action.
+        4. The current object to generate should be put into result.
+        5. The current issue or error goes into error_message.
         """
         # Create or get global context
         context = get_context(context)
@@ -110,15 +106,14 @@ class BuildAgent(Agent):
         # Start at 1 since we are showing to a user.
         self.attempts = self.attempts or 1
 
-        try:
-            genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-        except KeyError:
-            sys.exit("ERROR: GEMINI_API_KEY environment variable not set.")
-
         # This will either generate fresh or rebuild erroneous Dockerfile
         # We don't return the dockerfile because it is updated in the context
         self.generate_dockerfile(context)
-        print(Panel(context.dockerfile, title="[green]Dockerfile or Response[/green]", border_style="green"))
+        print(
+            Panel(
+                context.result, title="[green]Dockerfile or Response[/green]", border_style="green"
+            )
+        )
 
         # Set the container on the context for a next step to use it...
         container = context.get("container") or self.generate_name(context.application)
@@ -127,6 +122,7 @@ class BuildAgent(Agent):
         # Build it! We might want to only allow a certain number of retries or incremental changes.
         return_code, output = self.build(context)
         if return_code == 0:
+            self.print_dockerfile(context.result)
             print(
                 Panel(
                     f"[bold green]✅ Build complete in {self.attempts} attempts[/bold green]",
@@ -134,42 +130,44 @@ class BuildAgent(Agent):
                     border_style="green",
                 )
             )
+
         else:
             print(
                 Panel(
                     "[bold red]❌ Build failed[/bold red]", title="Build Status", border_style="red"
                 )
             )
+            # Ask the debug agent to better instruct the error message
+            # This becomes a more guided output
+            context.error_message = output
+            agent = DebugAgent()
+            # This updates the error message to be the output
+            context = agent.run(context, requires=prompts.requires)
+
+            # TODO: test this idea extending to manager
+            # manager should not be deciding what to do on failure,
+            # but decidin what to do (step) AFTER reach limit
             # If we are returning a failure:
             # 1. Set context.return_code
             # 2. error message is the result
-            if self.return_on_failure():
-                context.return_code = -1
-                context.result = output
-                return self.get_result(context)
+            # if self.return_on_failure():
+            #    context.return_code = -1
+            #    # TODO we should not have the manager parse error...
+            #    context.result = context.error_message
+            #    return self.get_result(context)
 
             self.attempts += 1
             print("\n[bold cyan] Requesting Correction from Build Agent[/bold cyan]")
 
             # Update the context with error message
-            context.error_message = output
             return self.run(context)
 
         # Add generation line
-        self.write_file(context, context.dockerfile)
-        self.print_dockerfile(context.dockerfile)
+        self.write_file(context, context.result)
 
         # Assume being called by a human that wants Dockerfile back,
         # unless we are being managed
         return self.get_result(context)
-
-    def get_result(self, context):
-        """
-        Return either the entire context or single result.
-        """
-        if context.is_managed:
-            return context
-        return context.dockerfile
 
     def print_dockerfile(self, dockerfile):
         """
@@ -223,7 +221,7 @@ class BuildAgent(Agent):
 
         # Write the Dockerfile to the temporary directory
         utils.write_file(dockerfile, os.path.join(build_dir, "Dockerfile"))
-        
+
         # If only one max attempt, don't print here, not important to show.
         if self.max_attempts is not None and self.max_attempts > 1:
             print(
@@ -252,7 +250,7 @@ class BuildAgent(Agent):
         """
         prompt = self.get_prompt(context)
         print("Sending build prompt to Gemini...")
-        print(textwrap.indent(prompt, "> ", predicate=lambda _: True))
+        print(textwrap.indent(prompt[0:1000], "> ", predicate=lambda _: True))
 
         # The API can error and not return a response.text.
         content = self.ask_gemini(prompt)
@@ -260,7 +258,7 @@ class BuildAgent(Agent):
 
         # Try to remove Dockerfile from code block
         try:
-            content = self.get_code_block(content, 'dockerfile')
+            content = self.get_code_block(content, "dockerfile")
 
             # If we are getting commentary...
             match = re.search(dockerfile_pattern, content, re.DOTALL)
@@ -270,7 +268,8 @@ class BuildAgent(Agent):
                 dockerfile = content.strip()
 
             # The result is saved as a build step
-            context.dockerfile = dockerfile
+            # The dockerfile is the argument used internally
             context.result = dockerfile
+            context.dockerfile = dockerfile
         except Exception as e:
             sys.exit(f"Error parsing response from Gemini: {e}\n{content}")

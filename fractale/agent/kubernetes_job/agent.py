@@ -16,15 +16,14 @@ from rich.syntax import Syntax
 
 import fractale.agent.kubernetes_job.prompts as prompts
 import fractale.utils as utils
-from fractale.agent.base import Agent
+from fractale.agent.base import GeminiAgent
 from fractale.agent.context import get_context
+from fractale.agent.errors import DebugAgent
 
 yaml_pattern = r"```(?:yaml)?\n(.*?)```"
 
-import google.generativeai as genai
 
-
-class KubernetesJobAgent(Agent):
+class KubernetesJobAgent(GeminiAgent):
     """
     A Kubernetes Job agent knows how to design a Kubernetes job.
     """
@@ -69,13 +68,6 @@ class KubernetesJobAgent(Agent):
             dest="agent_name",
         )
 
-    def init(self):
-        """
-        Init adds the model. Maybe it's shared between executions, not sure.
-        """
-        model = genai.GenerativeModel("gemini-2.5-pro")
-        self.chat = model.start_chat()
-
     def get_prompt(self, context):
         """
         Get the prompt for the LLM. We expose this so the manager can take it
@@ -95,19 +87,15 @@ class KubernetesJobAgent(Agent):
         """
         Run the agent.
         """
-        try:
-            genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-        except KeyError:
-            sys.exit("ERROR: GEMINI_API_KEY environment variable not set.")
-
         # Init attempts. Each agent has an internal counter for total attempts
-        self.attempts = self.attempts or 0
+        self.attempts = self.attempts or 1
 
         # Create or get global context
         context = get_context(context)
 
-        # These are required
+        # These are required, context file is not (but recommended)
         container = context.get("container", required=True)
+        context = self.add_build_context(context)
 
         # This will either generate fresh or rebuild erroneous Job
         job_crd = self.generate_crd(context)
@@ -136,31 +124,38 @@ class KubernetesJobAgent(Agent):
             print("\n[bold cyan] Requesting Correction from Kubernetes Job Agent[/bold cyan]")
             self.attempts += 1
 
+            # Ask the debug agent to better instruct the error message
+            context.error_message = output
+            agent = DebugAgent()
+            # This updates the error message to be the output
+            context = agent.run(context, requires=prompts.requires)
+
             # Return early based on max attempts
-            if self.return_on_failure():
-                context.return_code = -1
-                context.result = output
-                return self.get_result(context)
+            # if self.return_on_failure():
+            #    context.return_code = -1
+            #    context.result = output
+            #    return self.get_result(context)
 
             # Trigger again, provide initial context and error message
             # This is the internal loop running, no manager agent
-            context.error_message = output
-            context.job_crd = job_crd
+            context.result = job_crd
             return self.run(context)
 
         self.write_file(context, job_crd)
         self.print_crd(job_crd)
         return self.get_result(context)
 
-
-    def get_result(self, context):
+    def add_build_context(self, context):
         """
-        Return either the entire context or single result.
+        Build context can come from a dockerfile, or context_file.
         """
-        if context.is_managed:
-            return context
-        return context.job_crd
-
+        # We already have the dockerfile from the build agent as context.
+        if "dockerfile" in context:
+            return
+        build_context = context.get("context_file")
+        if build_context and os.path.exists(build_context):
+            context.dockerfile = utils.read_file(build_context)
+        return context
 
     def print_crd(self, job_crd):
         """
@@ -442,9 +437,9 @@ class KubernetesJobAgent(Agent):
         content = self.ask_gemini(prompt)
         print("Received response from Gemini...")
 
-        # Try to remove Dockerfile from code block
+        # Try to remove code (Dockerfile, manifest, etc.) from the block
         try:
-            content = self.get_code_block(content, 'yaml')
+            content = self.get_code_block(content, "yaml")
 
             # If we are getting commentary...
             match = re.search(yaml_pattern, content, re.DOTALL)

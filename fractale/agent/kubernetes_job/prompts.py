@@ -1,18 +1,23 @@
 import fractale.agent.defaults as defaults
 from fractale.agent.prompts import prompt_wrapper
 
+# Requirements are separate to give to error helper agent
+requires = """
+- Please deploy to the default namespace.
+- Do not create or require abstractions beyond the Job (no ConfigMap or Volume or other types)
+- Do not create or require external data. Use example data provided with the app or follow instructions.
+- Do not add resources, custom entrypoint/args, affinity, init containers, nodeSelector, or securityContext unless explicitly told to.
+"""
 
-common_instructions = """- Be mindful of the cloud and needs for resource requests and limits for network or devices.
+common_instructions = (
+    """- Be mindful of the cloud and needs for resource requests and limits for network or devices.
 - The response should only contain the complete, corrected YAML manifest inside a single markdown code block.
 - Do not add your narration unless it has a "#" prefix to indicate a comment.
 - Use succinct comments to explain build logic and changes.
 - This will be a final YAML manifest - do not tell me to customize something.
-- Please deploy to the default namespace.
-- Do not create or require abstractions beyond the Job (no ConfigMap or Volume or other types)
-- Do not create data. Use example data provided with the app or follow instructions.
-- Do not add resources, custom entrypoint/args, affinity, init containers, nodeSelector, or securityContext unless explicitly told to.
-
 """
+    + requires
+)
 
 regenerate_prompt = """Your previous attempt to generate the manifest failed. Please analyze the instruction to fix it and make another try.
 

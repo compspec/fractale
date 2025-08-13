@@ -1,9 +1,7 @@
 import collections
-import os
-import re
-import shutil
+import sys
 
-import fractale.utils as utils
+from rich import Panel, print
 
 
 def get_context(context):
@@ -63,7 +61,14 @@ class Context(collections.UserDict):
                 """
                 if required:
                     if key not in self.data:
-                        raise KeyError(f"Key '{key}' is required but missing.")
+                        print(
+                            Panel(
+                                f"[bold red]❌ Key `{key}` is required but missing[/bold red]",
+                                title="Context Status",
+                                border_style="red",
+                            )
+                        )
+                        sys.exit(-1)
 
                     # If required and found, just return the value
                     return self.data[key]

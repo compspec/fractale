@@ -1,4 +1,3 @@
-import os
 import sys
 
 from fractale.agent import get_agents

@@ -22,7 +22,6 @@ plan:
     environment: "google cloud CPU instance in Kubernetes" 
     max_attempts: 1
     details: |
-      Please execute the reaxff HNS example, and assume the data in the PWD,
+      Please execute the in.reaxff.hns example, and assume the data in the PWD,
       Run lammpss with params -v x 2 -v y 2 -v z 2 -in ./in.reaxff.hns
-      and with -nocite flag for CPU. Do not try to generate configmap data.
-      Do not add any nodeSelector or affinity rules since we are testing.
+      and with -nocite flag for CPU.

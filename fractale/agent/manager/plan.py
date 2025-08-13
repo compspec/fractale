@@ -1,10 +1,11 @@
+import copy
+
 import jsonschema
 from jsonschema import validators
-from fractale.agent.context import get_context
 from rich import print
-import copy 
 
 import fractale.utils as utils
+from fractale.agent.context import get_context
 
 
 def set_defaults(validator, properties, instance, schema):
@@ -138,7 +139,7 @@ class Step:
         More easily expose the get_initial_prompt function on the agent.
         """
         return self._agent.get_initial_prompt(context)
-    
+
     def execute(self, context):
         """
         Execute a plan step (associated with an agent)

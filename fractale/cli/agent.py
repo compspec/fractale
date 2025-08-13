@@ -18,8 +18,13 @@ def main(args, extra, **kwargs):
         sys.exit(f"{args.agent_name} is not a recognized agent.")
 
     # Get the agent and run!
-    agent = agents[args.agent_name]()
+    # Save determines if we want to save state to an output directory
+    agent = agents[args.agent_name](use_cache=args.use_cache)
+
+    # This is the context - we can remove variables not needed
+    context = vars(args)
+    del context["use_cache"]
 
     # This is built and tested! We can do something with it :)
     # Note that vars converts the argparse arguments into a dictionary
-    agent.run(vars(args))
+    agent.run(context)

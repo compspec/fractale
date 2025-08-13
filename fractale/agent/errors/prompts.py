@@ -13,21 +13,19 @@ def get_debug_prompt(context, requires):
     code_block = context.get("result", required=True)
     prompt = debug_prompt
 
-    # Additional details from the user, e.g., about data
-    details = context.get("details")
-    if details:
-        prompt += "\nPlease consider the follow details from the user:\n%s\n" % details
-
     # Requirements are specific constraints to give to the error agent
     if requires:
-        prompt += "\n" + requires + "\n"
+        prompt += requires + "\n"
 
-    # Add additional context
-    prompt += "Here is additional context to guide your instruction:\n"
+    # Add additional context (details from user are provided here)
+    prompt += "Here is additional context to guide your instruction. YOU CANNOT CHANGE THESE VARIABLES OR FILES OR SUGGEST TO DO SO.\n"
     for key, value in context.items():
         if key in defaults.shared_args:
             continue
+        if key == "details":
+            key = "details from user"
         prompt += f"{key} is defined as: {value}\n"
 
     prompt += f"Here is the code:\n{code_block}\nAnd here is the error output:\n{error_message}"
-    return prompt
+    # Remove double newlines
+    return prompt.strip("\n\n")

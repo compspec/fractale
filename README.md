@@ -21,44 +21,7 @@ This part of the library is under development. There are three kinds of agents:
 The design is simple in that each agent is responding to state of error vs. success. In the case of a step agent, the return code determines to continue or try again. In the case of a helper, the input is typically an erroneous response (or something that needs changing) with respect to a goal.
 For a manager, we are making a choice based on a previous erroneous step.
 
-See [examples/agent](examples/agent) for an example.
-
-#### To do items
-
-- refactor manager to not handle prompt, just get step when retries come back.
-- then need to decide how to handle kubernetes job creating additional structures.
-- Get basic runner working
-- Add in ability to get log and optimize - the manager will need to use goal
-- We likely want the manager to be able to edit the prompt.
- - should be provided with entire prompt?
-- When pod pending, it can be due to resource issues (and will never start). Right now we will time out, but we should be able to catch that earlier.
-
-#### Research Questions
-
-**And experiment ideas**
-
-- How do we define stability?
-- What are the increments of change (e.g., "adding a library")? We should be able to keep track of times for each stage and what changed, and an analyzer LLM can look at result and understand (categorize) most salient contributions to change.
-  - We also can time the time it takes to do subsequent changes, when relevant. For example, if we are building, we should be able to use cached layers (and the build times speed up) if the LLM is changing content later in the Dockerfile.
-- We can also save the successful results (Dockerfile builds, for example) and compare for similarity. How consistent is the LLM?
-- How does specificity of the prompt influence the result?
-- For an experiment, we would want to do a build -> deploy and successful run for a series of apps and get distributions of attempts, reasons for failure, and a general sense of similarity / differences.
-- For the optimization experiment, we'd want to do the same, but understand gradients of change that led to improvement.
-
-#### Observations
-
-- Specifying cpu seems important - if you don't it wants to do GPU
-- If you ask for a specific example, it sometimes tries to download data (tell it where data is)
-- Always include common issues in the initial prompt
-- If you are too specific about instance types, it adds node selectors/affinity, and that often doesn't work.
-
-#### Ideas
-
-- The manager agent is currently generated an updated prompt AND choosing the step.
- - Arguably we should have a separation of responsibility so a step can ask to fix an error without a manager.
-- I think we need one more level of agent - a step agent should have helper agents that can:
- - take an error message and analyze to get a fix.
-
+See [examples/agent](examples/agent) for an example, along with observations, research questions, ideas, and experiment brainstorming!
 
 ### Job Specifications
 

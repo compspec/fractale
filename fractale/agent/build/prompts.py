@@ -7,11 +7,12 @@ requires = """
 - Do not change the name of the application image provided.
 - Don't worry about users/permissions - just be root.
 - Assume a default of CPU if GPU or CPU is not stated.
+- Do not do a multi-stage build, and do not COPY or ADD anything.
+- Try to place executables on the PATH so they do not need to be discovered.
 """
 
 common_instructions = (
-    """- Optimize for performance using best practices, especially for HPC applications.
-- If the application involves MPI, configure it for compatibility for the containerized environment.
+    """- If the application involves MPI, configure it for compatibility for the containerized environment.
 - The response should ONLY contain the complete Dockerfile.
 - Do not add your narration unless it has a "#" prefix to indicate a comment.
 """
@@ -39,9 +40,7 @@ def get_rebuild_prompt(context):
 
 
 build_prompt = (
-    f"""Act as a Dockerfile builder service expert.
-I need to create a Dockerfile for an application '%s'.
-The target environment is '%s'.
+    f"""Act as a Dockerfile builder service expert. I need to create a Dockerfile for an application '%s'. The target environment is '%s'.
 
 Please generate a robust, production-ready Dockerfile.
 - The response should ONLY contain the complete Dockerfile.

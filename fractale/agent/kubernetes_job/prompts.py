@@ -7,6 +7,8 @@ requires = """
 - Do not create or require abstractions beyond the Job (no ConfigMap or Volume or other types)
 - Do not create or require external data. Use example data provided with the app or follow instructions.
 - Do not add resources, custom entrypoint/args, affinity, init containers, nodeSelector, or securityContext unless explicitly told to.
+- Assume that needed software is on the PATH, and don't specify full paths to executables.
+- Set the backoff limit to 1, assuming if it does not work the first time, it will not.
 """
 
 common_instructions = (
@@ -52,7 +54,7 @@ def get_generate_prompt(context):
 
 def add_no_pull(prompt, no_pull=False):
     if no_pull:
-        prompt += "- Please set the imagePullPolicy of the main container to Never."
+        prompt += "- Please set the imagePullPolicy of the main container to Never.\n"
     return prompt
 
 
@@ -69,8 +71,6 @@ meta_bundle = f"""
 
 failure_message = """Job failed during execution.
 
---- Captured Logs ---
-%s
-
 --- Diagnostics ---
+%s
 %s"""

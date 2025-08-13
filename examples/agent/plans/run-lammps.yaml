@@ -8,20 +8,14 @@ plan:
   context:
     environment: "google cloud CPU instance in Kubernetes"
     application: lammps
-    max_attempts: 1
+    max_attempts: 10
     details: |
-      Please build the with reaxff HNS example located in examples/reaxff/HNS.
-      Make sure to keep the full content of that directory as is, and
-      the target file is named in.reaxff.hns. To make it easy for the
-      next agent, please make the working directory where the data is
-      located.
+      Ensure all globbed files from examples/reaxff/HNS from the root of the lammps codebase are in the WORKDIR. Clone the latest branch of LAMMPS.
 
 - agent: kubernetes-job
   context:
     no_pull: true
     environment: "google cloud CPU instance in Kubernetes" 
-    max_attempts: 1
+    max_attempts: 10
     details: |
-      Please execute the in.reaxff.hns example, and assume the data in the PWD,
-      Run lammpss with params -v x 2 -v y 2 -v z 2 -in ./in.reaxff.hns
-      and with -nocite flag for CPU.
+      Run in.reaxff.hns in the pwd with lmp -v x 2 -v y 2 -v z 2 -in ./in.reaxff.hns -nocite

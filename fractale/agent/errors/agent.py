@@ -1,9 +1,9 @@
 import textwrap
 
 from rich import print
-from rich.panel import Panel
 
 import fractale.agent.errors.prompts as prompts
+import fractale.agent.logger as logger
 from fractale.agent.base import GeminiAgent
 from fractale.agent.context import get_context
 
@@ -27,6 +27,8 @@ class DebugAgent(GeminiAgent):
     def run(self, context, requires=None):
         """
         Run the agent. This is a helper agent, so it just does a simple task.
+
+        There is also no relevance or concept of a cache (at least for now)
         """
         # We don't do attempts because we have no condition for success.
         context = get_context(context)
@@ -42,7 +44,7 @@ class DebugAgent(GeminiAgent):
         print(textwrap.indent(prompt[0:1000], "> ", predicate=lambda _: True))
         content = self.ask_gemini(prompt)
         print("Received debugging advice from Gemini...")
-        print(Panel(content, title="[green]Debug Advice[/green]", border_style="green"))
+        logger.custom(content, title="[green]Debug Advice[/green]", border_style="green")
 
         # The tweaked output as the advice for next step (instead of entire error output)
         context.error_message = content

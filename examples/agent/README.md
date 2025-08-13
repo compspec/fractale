@@ -10,9 +10,10 @@ The build agent will use the Gemini API to generate a Dockerfile and then build 
 Here is how to first ask the build agent to generate a lammps container for Google cloud.
 
 ```bash
-fractale agent build lammps --environment "google cloud CPU" --outfile Dockerfile.lammps
+fractale agent build lammps --environment "google cloud CPU" --outfile Dockerfile --details "Ensure all globbed files from examples/reaxff/HNS from the root of the lammps codebase are in the WORKDIR. Clone the latest branch of LAMMPS."
 ```
 
+Note that we are specific about the data and using CPU, which is something the builder agent would have to guess.
 That might generate the [Dockerfile](Dockerfile) here, and a container that defaults to the application name "lammps"
 
 ### Kubernetes Job
@@ -27,8 +28,19 @@ kind load docker-image lammps
 To start, we will assume a kind cluster running and tell the agent the image is loaded into it (and so the pull policy will be never). 
 
 ```bash
-fractale agent kubernetes-job lammps --environment "google cloud CPU" --context-file ./Dockerfile --no-pull
+fractale agent kubernetes-job lammps --environment "google cloud CPU" --context-file ./Dockerfile --no-pull --details "Run in.reaxff.hns in the pwd with lmp" --outfile ./job.yaml
 ```
+
+## With Cache
+
+The same steps can be run using a cache. This will save to a deterministic path in the present working directory, and means that you can run steps a la carte, and run a workflow later to re-use the context (and not wait again).
+Note that when you save a cache, you often don't need to save the output file, because it will be the result in the context.
+
+```bash
+fractale agent build lammps --environment "google cloud CPU"  --details "Ensure all globbed files from examples/reaxff/HNS from the root of the lammps codebase are in the WORKDIR. Clone the latest branch of LAMMPS." --use-cache
+```
+
+And then try running with the manager (below) with the cache to see it being used.
 
 ## Manager
 
@@ -42,10 +54,37 @@ try again.
 
 ```bash
 fractale agent --plan ./plans/run-lammps.yaml
+
+# or try using with the cache
+fractale agent --plan ./plans/run-lammps.yaml --use-cache
 ```
 
-For this first design, we are taking an approach where we only re-assess the state and go back to a previous step given a last step failure. The assumption is that if a previous step fails, we keep trying until it succeeds. We only need to backtrack if the last step in a sequence is not successful, and it is due to failure at some stage in the process. But I do think we have a few options:
+We haven't hit the case yet where the manager needs to take over - that needs further development, along with being goal oriented (e.g., parsing a log and getting an output). 
 
-1. Allow the manager to decide what to do on _every_ step (likely not ideal)
-2. Allow step managers to execute until success, always (too much issue if a step is failing because of dependency)
-3. Allow step managers to execute until success unless a limit is set, and then let the manager take over (in other words, too many failures means we hand it back to the manager to look.)
+## Notes
+
+#### To do items
+
+- Figure out optimization agent (with some goal)
+
+#### Research Questions
+
+**And experiment ideas**
+
+- How do we define stability?
+- What are the increments of change (e.g., "adding a library")? We should be able to keep track of times for each stage and what changed, and an analyzer LLM can look at result and understand (categorize) most salient contributions to change.
+  - We also can time the time it takes to do subsequent changes, when relevant. For example, if we are building, we should be able to use cached layers (and the build times speed up) if the LLM is changing content later in the Dockerfile.
+- We can also save the successful results (Dockerfile builds, for example) and compare for similarity. How consistent is the LLM?
+- How does specificity of the prompt influence the result?
+- For an experiment, we would want to do a build -> deploy and successful run for a series of apps and get distributions of attempts, reasons for failure, and a general sense of similarity / differences.
+- For the optimization experiment, we'd want to do the same, but understand gradients of change that led to improvement.
+
+#### Observations
+
+- Specifying cpu seems important - if you don't it wants to do GPU
+- If you ask for a specific example, it sometimes tries to download data (tell it where data is)
+- There are issues that result from not enough information. E.g., if you don't tell it what to run / data, it can only guess. It will loop forever.
+ - As an example, we know where in a git clone is the data of interest. The LLM can only guess. It's easier to tell it exactly.
+ - An LLM has no sense of time with respect to versions. For example, the reax data changed from reaxc to reaxff in the same path, and which you get depends on the clone. Depending on when the LLM was trained with how to build lammps, it might select an older (or latest) branch. Instead of a juggling or guessing game (that again) would result in an infinite loop, we need to tell it the branch and data file explicitly.
+- Always include common issues in the initial prompt
+- If you are too specific about instance types, it adds node selectors/affinity, and that often doesn't work.

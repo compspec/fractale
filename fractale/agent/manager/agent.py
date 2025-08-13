@@ -1,12 +1,12 @@
 import json
 import os
-import tempfile
+from datetime import datetime
 
 from rich import print
-from rich.panel import Panel
 
-import fractale.agent.defaults as defaults
+import fractale.agent.logger as logger
 import fractale.agent.manager.prompts as prompts
+import fractale.utils as utils
 from fractale.agent.base import GeminiAgent
 from fractale.agent.context import Context
 from fractale.agent.manager.plan import Plan
@@ -59,26 +59,29 @@ class ManagerAgent(GeminiAgent):
 
         Provide only the single JSON object for the corrective step in your response.
         """
-        print(
-            Panel(
-                "Consulting LLM for error recovery plan...",
-                title="[yellow]Error Triage[/yellow]",
-                border_style="yellow",
-            )
-        )
+        logger.warning("Consulting LLM for error recovery plan...", title="Error Triage")
+
         response = self.model.generate_content(prompt)
 
         try:
             text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
             return json.loads(text)
         except (json.JSONDecodeError, AttributeError):
-            print(
-                Panel(
-                    f"[bold red]Error: Could not parse recovery step from LLM response.[/bold red]\nFull Response:\n{response.text}",
-                    title="[red]Critical Error[/red]",
-                )
+            logger.custom(
+                f"[bold red]Error: Could not parse recovery step from LLM response.[/bold red]\nFull Response:\n{response.text}",
+                title="[red]Critical Error[/red]",
             )
-            return None
+
+    def save_results(self, tracker):
+        """
+        Save results to file based on timestamp.
+
+        Just ploop into pwd for now, we can eventually take a path.
+        """
+        now = datetime.now()
+        timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+        results_file = os.path.join(os.getcwd(), f"results-{timestamp}.json")
+        utils.write_json(tracker, results_file)
 
     def run(self, context):
         """
@@ -94,34 +97,29 @@ class ManagerAgent(GeminiAgent):
         # The context is managed, meaning we return updated contexts
         context.managed = True
 
-        # Load plan (required)
-        plan = Plan(context.get("plan", required=True))
+        # Load plan (required) and pass on setting to use cache to agents
+        plan = Plan(context.get("plan", required=True), use_cache=self.use_cache)
 
         # The manager model works as the orchestrator of work.
-        print(
-            Panel(
-                f"Manager Initialized with Agents: [bold cyan]{plan.agent_names}[/bold cyan]",
-                title="[green]Manager Status[/green]",
-            )
+        logger.custom(
+            f"Manager Initialized with Agents: [bold cyan]{plan.agent_names}[/bold cyan]",
+            title="[green]Manager Status[/green]",
         )
 
         # Ensure we cleanup the workspace, unless user asks to keep it.
         try:
             tracker = self.run_tasks(context, plan)
-            print(
-                Panel(
-                    f"Agentic tasks complete: [bold magenta]{len(tracker)} agent runs[/bold magenta]",
-                    title="[green]Manager Status[/green]",
-                )
+            logger.custom(
+                f"Agentic tasks complete: [bold magenta]{len(tracker)} agent runs[/bold magenta]",
+                title="[green]Manager Status[/green]",
             )
+            self.save_results(tracker)
+
+        # Raise for now so I can see the issue.
         except Exception as e:
-            print(
-                Panel(
-                    f"Orchestration failed:\n{str(e)}",
-                    title=f"[red]❌ Orchestration Failed[/red]",
-                    border_style="red",
-                    expand=False,
-                )
+            raise e
+            logger.error(
+                f"Orchestration failed:\n{str(e)}", title="Orchestration Failed", expand=False
             )
 
     def run_tasks(self, context, plan):
@@ -149,20 +147,20 @@ class ManagerAgent(GeminiAgent):
                 attempts[step.agent] = 0
 
             # Each time build runs, it has its own internal attempts counter.
+            # Important: this counter is external (different) for the entire step
+            # which has some number of internal attempts that reset each time
             if step.reached_maximum_attempts(attempts[step.agent]):
                 print(f"[red]Agent '{step.agent}' has reached max attempts {step.attempts}.[/red]")
                 break
             attempts[step.agent] += 1
 
-            print(
-                Panel(
-                    f"Executing step {current_step_index + 1}/{len(plan)} with agent [bold cyan]{step.agent}[/bold cyan]",
-                    title=f"[blue]Orchestrator Attempt {attempts[step.agent]}[/blue]",
-                )
+            logger.custom(
+                f"Executing step {current_step_index + 1}/{len(plan)} with agent [bold cyan]{step.agent}[/bold cyan]",
+                title=f"[blue]Orchestrator Attempt {attempts[step.agent]}[/blue]",
             )
+
             # Execute the agent.
-            # The agent is allowed to run internally up to some number
-            # of retries (defaults to unset)
+            # The agent is allowed to run internally up to some number of retries (defaults to unset)
             # It will save final output to context.result
             with timer:
                 context = step.execute(context)
@@ -175,25 +173,27 @@ class ManagerAgent(GeminiAgent):
             # Not setting a return code indicates success.
             return_code = context.get("return_code") or 0
             if return_code == 0:
-                print(f"[green]✅ Step successful.[/green]")
                 current_step_index += 1
                 context.reset()
 
             # If we reach max attempts and no success, we need to intervene
             else:
+                print("STEP NOT SUCCESSFUL: TODO what to do here?")
+                # Try getting recovery step and ask manager to choose next action
+                import IPython
+
+                IPython.embed()
+
                 # This is the intiial (cleaned) prompt to give the manager context
                 instruction = step.get_initial_prompt(context)
 
                 # Give the error message to the manager to triage
                 prompt = prompts.get_retry_prompt(instruction, context.result)
                 response = self.ask_gemini(prompt, with_history=False)
-                print(
-                    Panel(
-                        f"Step failed. Instruction to agent:\n{context.result}",
-                        title=f"[red]❌ Manager Instruction: {step.agent}[/red]",
-                        border_style="red",
-                        expand=False,
-                    )
+                logger.error(
+                    f"Step failed. Instruction to agent:\n{context.result}",
+                    title=f"Manager Instruction: {step.agent}",
+                    expand=False,
                 )
                 context.reset()
                 context.error_message = response
@@ -204,11 +204,10 @@ class ManagerAgent(GeminiAgent):
                 # up to that point.
                 recovery_step = self.get_recovery_step(context, step, message)
                 if recovery_step:
+                    logger.warning()
                     print(
-                        Panel(
-                            f"Inserting recovery step from agent [bold cyan]{recovery_step['agent_name']}[/bold cyan].",
-                            title="[yellow]Recovery Plan[/yellow]",
-                        )
+                        f"Inserting recovery step from agent [bold cyan]{recovery_step['agent_name']}[/bold cyan].",
+                        title="Recovery Plan",
                     )
                     # TODO this shouldn't be an insert, but a find and replace and then
                     # updating of the index to supoprt that.
@@ -221,94 +220,16 @@ class ManagerAgent(GeminiAgent):
             # This resets return code and result only.
             context.reset()
 
-        print("Orchestration complete - figure out return Vanessa")
-        import IPython
-
-        IPython.embed()
         if current_step_index == len(plan):
-            print(
-                Panel(
-                    "🎉 Orchestration Complete: All plan steps succeeded!",
-                    title="[bold green]Workflow Success[/bold green]",
-                )
+            logger.custom(
+                "🎉 Orchestration Complete: All plan steps succeeded!",
+                title="[bold green]Workflow Success[/bold green]",
             )
-            print(Panel(json.dumps(context, indent=2), title="[green]Final Context[/green]"))
         else:
-            print(
-                Panel(
-                    f"Workflow failed after {attempts} attempts.",
-                    title="[bold red]Workflow Failed[/bold red]",
-                )
+            logger.custom(
+                f"Workflow failed after {self.max_attempts} attempts.",
+                title="[bold red]Workflow Failed[/bold red]",
             )
 
-
-if __name__ == "__main__":
-    # --- DEMONSTRATION OF USAGE ---
-
-    # 1. Define dummy worker agents for the demo
-    class DummyDockerAgent:
-        name = "docker-builder"
-        description = "Handles Dockerfile creation and image building."
-
-        def run(self, task, context):
-            print(f"  [Docker Agent] Received task: {task}")
-            # Simulate a failure on the first try
-            if "fix" not in task.lower():
-                # This error message will be sent to the LLM for analysis
-                return (
-                    1,
-                    "docker build error: The command '/bin/sh -c make' returned a non-zero code: 127. make: not found",
-                    context,
-                )
-            else:
-                print("  [Docker Agent] Applying fix and building again...")
-                context["image_uri"] = "my-hpc-app:v2-fixed"
-                return (0, "Build successful", context)
-
-    class DummyK8sAgent:
-        name = "kubernetes-job"
-        description = "Deploys containers as Kubernetes Jobs."
-
-        def run(self, task, context):
-            print(f"  [K8s Agent] Received task: {task}")
-            print(f"  [K8s Agent] Using image: {context.get('image_uri')}")
-            return (0, "Job deployed and completed successfully.", context)
-
-    # 2. Create the JSON plan content as a string
-    plan_content = """
-    {
-      "name": "Standard Build and Deploy",
-      "description": "Builds a Docker container from source and deploys it as a Kubernetes Job.",
-      "plan": [
-        {
-          "agent_name": "docker-builder",
-          "task_description": "Create a Dockerfile and build a container image for the HPC application."
-        },
-        {
-          "agent_name": "kubernetes-job",
-          "task_description": "Take the 'image_uri' from the context and deploy it as a Kubernetes Job."
-        }
-      ]
-    }
-    """
-
-    # 3. Create a temporary file to act as our plan file
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as temp_plan:
-        temp_plan.write(plan_content)
-        temp_plan_path = temp_plan.name
-
-    print(f"Created a temporary plan file for demonstration at: {temp_plan_path}\n")
-
-    # 4. Configure Gemini and initialize agents
-    # Configure Gemini API Key
-    # genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-
-    docker_agent = DummyDockerAgent()
-    k8s_agent = DummyK8sAgent()
-    orchestrator = OrchestratorAgent(agents=[docker_agent, k8s_agent])
-
-    # 5. Run the orchestrator, providing the FULL PATH to the plan
-    orchestrator.run(plan_path=temp_plan_path, initial_context={"source_dir": "/path/to/src"})
-
-    # 6. Clean up the temporary file
-    os.remove(temp_plan_path)
+        # Tracker is final result from each step, along with timings
+        return tracker

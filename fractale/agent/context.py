@@ -1,7 +1,6 @@
 import collections
-import sys
 
-from rich import Panel, print
+import fractale.agent.logger as logger
 
 
 def get_context(context):
@@ -61,14 +60,8 @@ class Context(collections.UserDict):
                 """
                 if required:
                     if key not in self.data:
-                        print(
-                            Panel(
-                                f"[bold red]❌ Key `{key}` is required but missing[/bold red]",
-                                title="Context Status",
-                                border_style="red",
-                            )
-                        )
-                        sys.exit(-1)
+                        raise ValueError(f"Key `{key}` is required but missing")
+                        logger.exit(f"Key `{key}` is required but missing", title="Context Status")
 
                     # If required and found, just return the value
                     return self.data[key]

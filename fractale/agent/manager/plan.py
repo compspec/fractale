@@ -56,10 +56,11 @@ class Plan:
     A plan for a manager includes one or more agents and a goal.
     """
 
-    def __init__(self, plan_path):
+    def __init__(self, plan_path, use_cache=False):
         self.plan_path = plan_path
         self.plan = utils.read_yaml(plan_path)
         self.agent_names = set()
+        self.use_cache = use_cache
 
         self.validate()
         self.load()
@@ -80,7 +81,7 @@ class Plan:
                 raise ValueError(f"Agent {spec['agent']} is not known.")
 
             # Add the agent to the step
-            step = Step(spec, known_agents[agent_name])
+            step = Step(spec, known_agents[agent_name], use_cache=self.use_cache)
 
             # The agents are retrieved via index
             self.agents.append(step)
@@ -115,9 +116,9 @@ class Plan:
 
 
 class Step:
-    def __init__(self, step, agent):
+    def __init__(self, step, agent, use_cache=False):
         self.step = step
-        self._agent = agent()
+        self._agent = agent(use_cache=use_cache)
 
         # If the step context defines a max number of attempts, set it for the agent
         max_attempts = self.step["context"].get("max_attempts")
@@ -125,12 +126,14 @@ class Step:
 
     def update(self, context):
         """
-        Carefully add only new attributes.
+        Carefully add only new attributes, unless it's a step-specific attribute we
+        know is shared but unique to steps.
 
         We can't use dict tricks here because we lose the context class.
         """
+        overrides = ["agent_name", "details", "use_cache", "outfile"]
         for k, v in self.step["context"].items():
-            if k not in context:
+            if k not in context or k in overrides:
                 context[k] = v
         return context
 
@@ -147,8 +150,6 @@ class Step:
         # Add new variables that aren't present
         context = self.update(context)
 
-        # TODO allow adding limit for attempts
-        # right now this only returns after success
         # This is the context returned
         return self._agent.run(context)
 

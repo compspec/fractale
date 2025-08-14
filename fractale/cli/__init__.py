@@ -97,6 +97,16 @@ def get_parser():
         action="store_true",
         default=False,
     )
+    agent.add_argument(
+        "--results",
+        help="Save to a custom results directory.",
+    )
+    agent.add_argument(
+        "--incremental",
+        help="Save incremental results for later inspection",
+        action="store_true",
+        default=False,
+    )
 
     # Add agent parsers
     parsers.register(agents)

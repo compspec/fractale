@@ -78,9 +78,11 @@ class ManagerAgent(GeminiAgent):
 
         Just ploop into pwd for now, we can eventually take a path.
         """
+        if not os.path.exists(self.results_dir):
+            os.makedirs(self.results_dir)
         now = datetime.now()
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
-        results_file = os.path.join(os.getcwd(), f"results-{timestamp}.json")
+        results_file = os.path.join(self.results_dir, f"results-{timestamp}.json")
         utils.write_json(tracker, results_file)
 
     def run(self, context):
@@ -167,7 +169,16 @@ class ManagerAgent(GeminiAgent):
 
             # Keep track of running the agent and the time it took
             # Also keep result of each build step (we assume there is one)
-            tracker.append([step.agent, timer.elapsed_time, context.get("result")])
+            # We will eventually want to also save the log.
+            tracker.append(
+                {
+                    "agent": step.agent,
+                    "elapsed_time_seconds": timer.elapsed_time,
+                    "result": context.get("result"),
+                    "attempts": step.attempts,
+                    "logs": step.logs,
+                }
+            )
 
             # If we are successful, we go to the next step.
             # Not setting a return code indicates success.

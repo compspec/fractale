@@ -19,7 +19,9 @@ def main(args, extra, **kwargs):
 
     # Get the agent and run!
     # Save determines if we want to save state to an output directory
-    agent = agents[args.agent_name](use_cache=args.use_cache)
+    agent = agents[args.agent_name](
+        use_cache=args.use_cache, results_dir=args.results, incremental=args.incremental
+    )
 
     # This is the context - we can remove variables not needed
     context = vars(args)

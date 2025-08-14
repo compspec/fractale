@@ -1,9 +1,9 @@
-import json
 import os
 import sys
 
 import google.generativeai as genai
 
+from fractale.agent.decorators import callback, save_logs
 import fractale.agent.defaults as defaults
 import fractale.agent.logger as logger
 import fractale.utils as utils
@@ -23,7 +23,7 @@ class Agent:
 
     # name and description should be on the class
 
-    def __init__(self, use_cache=False):
+    def __init__(self, use_cache=False, results_dir=None, incremental=False):
 
         # Max attempts defaults to unlimited
         # We start counting at 1 for the user to see.
@@ -31,12 +31,21 @@ class Agent:
         self.attempts = 1
         self.max_attempts = None
 
+        # For now, assume this is for the manager.
+        # We can optionally save incremental result objects
+        self.results_dir = results_dir or os.getcwd()
+        self.save_incremental = incremental
+
         # The user can save if desired - caching the context to skip steps that already run.
         self.setup_cache(use_cache)
+
+        # This supports saving custom logs and step (attempt) metadata
+        self.metadata = {}
 
         # Custom initialization functions
         self.init()
 
+    @callback(save_logs)
     def run(self, context):
         """
         Run the agent - a wrapper around internal function _run that prepares it.

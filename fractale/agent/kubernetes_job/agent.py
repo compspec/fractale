@@ -151,6 +151,9 @@ class KubernetesJobAgent(GeminiAgent):
         Helper to collect rich error data for a failed job.
         """
         print("[yellow]Gathering diagnostics for failed job...[/yellow]")
+        print('TODO streamline')
+        import IPython 
+        IPython.embed()
 
         describe_job_cmd = ["kubectl", "describe", "job", job_name, "-n", namespace]
         job_description = subprocess.run(
@@ -482,6 +485,8 @@ class KubernetesJobAgent(GeminiAgent):
             final_status = self.get_job_status(job_name, namespace)
             is_active = final_status.get("active", 0) > 0
             time.sleep(5)
+
+        diagnostics = self.get_diagnostics(job_name, namespace)
 
         # But did it succeed?
         if final_status.get("succeeded", 0) > 0:

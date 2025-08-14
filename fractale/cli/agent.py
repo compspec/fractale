@@ -1,4 +1,3 @@
-import os
 import sys
 
 from fractale.agent import get_agents
@@ -10,12 +9,22 @@ def main(args, extra, **kwargs):
     """
     agents = get_agents()
 
+    # If we have a plan, we run the manager.
+    if args.plan is not None:
+        args.agent_name = "manager"
+
     # Right now we only have a build agent :)
     if args.agent_name not in agents:
         sys.exit(f"{args.agent_name} is not a recognized agent.")
 
     # Get the agent and run!
-    agent = agents[args.agent_name]()
+    # Save determines if we want to save state to an output directory
+    agent = agents[args.agent_name](use_cache=args.use_cache)
+
+    # This is the context - we can remove variables not needed
+    context = vars(args)
+    del context["use_cache"]
 
     # This is built and tested! We can do something with it :)
-    agent.run(args, extra)
+    # Note that vars converts the argparse arguments into a dictionary
+    agent.run(context)

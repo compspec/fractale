@@ -1,0 +1,21 @@
+name: Build and Deploy LAMMPS
+description: Build a Docker container and deploy it as a Kubernetes Job.
+plan:
+
+  # Important: everything you want to provide to the manager agent should be defined.
+  # Agents can pass steps in between, but the manager is always given stateless context.
+- agent: build
+  context:
+    environment: "google cloud CPU instance in Kubernetes"
+    application: lammps
+    max_attempts: 10
+    details: |
+      Ensure all globbed files from examples/reaxff/HNS from the root of the lammps codebase are in the WORKDIR. Clone the latest branch of LAMMPS.
+
+- agent: kubernetes-job
+  context:
+    no_pull: true
+    environment: "google cloud CPU instance in Kubernetes" 
+    max_attempts: 10
+    details: |
+      Run in.reaxff.hns in the pwd with lmp -v x 2 -v y 2 -v z 2 -in ./in.reaxff.hns -nocite

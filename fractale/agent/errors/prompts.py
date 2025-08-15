@@ -1,7 +1,14 @@
 import fractale.agent.defaults as defaults
 
 debug_prompt = f"""You are a debugging agent and expert. We attempted the following piece of code and had problems.
-Please identify the error and advise for how to fix the error."""
+Please identify the error and advise for how to fix the error. The agent you are returning to can only make scoped
+changes, which we provide below. If you determine the issue cannot be resolved by changing one of these files,
+we will need to return to another agent. In this case, please provide "RETURN TO MANAGER" anywhere in your response.
+"""
+
+interactive_prompt = """  If there is information the step cannot know such as runtime parameters or data paths"
+and the fix is not obvious (and you are guessing) please provide "INTERACTIVE SESSION" anywhere in your response
+"""
 
 
 def get_debug_prompt(context, requires):
@@ -12,6 +19,9 @@ def get_debug_prompt(context, requires):
     error_message = context.get("error_message", required=True)
     code_block = context.get("result", required=True)
     prompt = debug_prompt
+
+    if context.get("allow_interactive") is True:
+        prompt += interactive_prompt
 
     # Requirements are specific constraints to give to the error agent
     if requires:

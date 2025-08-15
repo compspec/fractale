@@ -1,5 +1,6 @@
 from fractale.agent.base import GeminiAgent
 import fractale.agent.build.prompts as prompts
+from fractale.agent.decorators import timed
 from fractale.agent.context import get_context
 from fractale.agent.errors import DebugAgent
 import fractale.agent.logger as logger
@@ -18,10 +19,6 @@ import subprocess
 import textwrap
 
 
-# regular expression in case LLM does not follow my instructions!
-dockerfile_pattern = r"```(?:dockerfile)?\n(.*?)```"
-
-
 class BuildAgent(GeminiAgent):
     """
     Builder agent.
@@ -33,6 +30,8 @@ class BuildAgent(GeminiAgent):
 
     name = "build"
     description = "builder agent"
+    state_variables = ["result", "dockerfile", "error_message"]
+    result_type = "dockerfile"
 
     def _add_arguments(self, subparser):
         """
@@ -54,6 +53,12 @@ class BuildAgent(GeminiAgent):
         build.add_argument(
             "--environment",
             help="Environment description to build for (defaults to generic)",
+        )
+        build.add_argument(
+            "--load",
+            help="Load into kind on success.",
+            default=False,
+            action="store_true",
         )
         return build
 
@@ -81,11 +86,22 @@ class BuildAgent(GeminiAgent):
         Remove standard lines (e.g., apt install stuff) that likely won't help but
         add many thousands of tokens... (in testing, from 272K down to 2k)
         """
-        skips = ["Get:", "Preparing to unpack", "Unpacking ", "Selecting previously "]
+        skips = [
+            "Get:",
+            "Preparing to unpack",
+            "Unpacking ",
+            "Selecting previously ",
+            "Setting up ",
+            "update-alternatives",
+            "Reading database ...",
+        ]
         regex = "(%s)" % "|".join(skips)
-        return "\n".join([x for x in output.split("\n") if not re.search(regex, x)])
+        output = "\n".join([x for x in output.split("\n") if not re.search(regex, x)])
+        # Try to match lines that start with #<number>
+        return "\n".join([x for x in output.split("\n") if not re.search(r"^#(\d)+ ", x)])
 
-    def _run(self, context):
+    @timed
+    def run_step(self, context):
         """
         Run the agent.
 
@@ -113,6 +129,7 @@ class BuildAgent(GeminiAgent):
         if return_code == 0:
             self.print_result(context.result)
             logger.success(f"Build complete in {self.attempts} attempts")
+            self.load(context)
         else:
             # Filter out likely not needed lines (ubuntu install)
             output = self.filter_output(output)
@@ -122,12 +139,14 @@ class BuildAgent(GeminiAgent):
             # Ask the debug agent to better instruct the error message
             # This becomes a more guided output
             context.error_message = output
-            agent = DebugAgent()
+
             # This updates the error message to be the output
-            context = agent.run(context, requires=prompts.requires)
+            context = DebugAgent().run(context, requires=prompts.requires)
+            print("\n[bold cyan] Requesting Correction from Build Agent[/bold cyan]")
 
             # If we have reached the max attempts...
-            if self.reached_max_attempts():
+            if self.reached_max_attempts() or context.get("return_to_manager") is True:
+                context.return_to_manager = False
 
                 # If we are being managed, return the result
                 if context.is_managed():
@@ -139,10 +158,9 @@ class BuildAgent(GeminiAgent):
                 logger.exit(f"Max attempts {self.max_attempts} reached.", title="Agent Failure")
 
             self.attempts += 1
-            print("\n[bold cyan] Requesting Correction from Build Agent[/bold cyan]")
 
             # Update the context with error message
-            return self.run(context)
+            return self.run_step(context)
 
         # Add generation line
         self.write_file(context, context.result)
@@ -150,6 +168,25 @@ class BuildAgent(GeminiAgent):
         # Assume being called by a human that wants Dockerfile back,
         # unless we are being managed
         return context
+
+    @timed
+    def load(self, context):
+        """
+        If specified, load into kind.
+        """
+        if not context.get("load") is True:
+            return
+
+        logger.info("Loading into kind...")
+        p = subprocess.run(
+            ["kind", "load", "docker-image", context.container],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if p.returncode != 0:
+            output = p.stdout + p.stderr
+            logger.warning(f"Issue with kind load: {output}")
 
     def print_result(self, dockerfile):
         """
@@ -183,6 +220,7 @@ class BuildAgent(GeminiAgent):
             name = name + "c"
         return name.lower()
 
+    @timed
     def build(self, context):
         """
         Build the Dockerfile! Yolo!
@@ -219,6 +257,18 @@ class BuildAgent(GeminiAgent):
         shutil.rmtree(build_dir, ignore_errors=True)
         return (p.returncode, p.stdout + p.stderr)
 
+    def save_dockerfile(self, dockerfile):
+        """
+        Save logs to metadata
+        """
+        if self.save_incremental:
+            if "dockerfile" not in self.metadata["assets"]:
+                self.metadata["assets"]["dockerfile"] = []
+            self.metadata["assets"]["dockerfile"].append(
+                {"item": dockerfile, "attempt": self.attempts}
+            )
+
+    @timed
     def generate_dockerfile(self, context):
         """
         Generates or refines a Dockerfile using the Gemini API.
@@ -233,14 +283,14 @@ class BuildAgent(GeminiAgent):
 
         # Try to remove Dockerfile from code block
         try:
-            content = self.get_code_block(content, "dockerfile")
-
-            # If we are getting commentary...
-            match = re.search(dockerfile_pattern, content, re.DOTALL)
+            # This can be provided as docker or dockerfile
+            pattern = "```(?:docker|dockerfile)?\n(.*?)```"
+            match = re.search(pattern, content, re.DOTALL)
             if match:
                 dockerfile = match.group(1).strip()
             else:
-                dockerfile = content.strip()
+                dockerfile = self.get_code_block(content, "dockerfile")
+            self.save_dockerfile(dockerfile)
 
             # The result is saved as a build step
             # The dockerfile is the argument used internally

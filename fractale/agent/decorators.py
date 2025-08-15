@@ -1,32 +1,52 @@
+import functools
 import time
 
-def callback(callback_func):
-    """
-    A decorator that executes a callback function after the decorated function.
 
-    We need this so that specific functions for the agent can return objects that save
-    one or more metadata items (automatically).
+def save_result(func):
     """
-    def decorator(func):
-        def wrapper(self, *args, **kwargs):
-            # This is the original function
-            start = time.time()
-            result = func(self, *args, **kwargs)
-            # Get the result and pass to the callback!
-            end = time.time()
-            callback_func(self, result, end-start)
-            return result
-        return wrapper
-    return decorator
+    Save the final result, with total elapsed time
+    """
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        # This is the original function
+        start = time.perf_counter()
+        context = func(self, *args, **kwargs)
+        # Get the result and pass to the callback!
+        end = time.perf_counter()
+        elapsed_time = end - start
+        final_result = context.get("result")
+        # Cut out early if missing result (e.g., failure)
+        if not self.save_incremental or not final_result:
+            return context
+        # This can be called more than once if nested
+        self.metadata["result"] = {
+            "item": final_result,
+            "total_seconds": elapsed_time,
+            "type": self.result_type,
+        }
+        return context
+
+    return wrapper
 
 
-def save_logs(instance, context, elapsed_time):
+def timed(func):
     """
-    If defined (requested by the user) save the stage result.
+    Timed decorator that adds timed executions for different functions
     """
-    result = context.get('result')
-    if not instance.save_incremental or not result:
-        return
-    if "logs" not in instance.metadata:
-        instance.metadata['logs'] = []  
-    instance.metadata['logs'].append({"log": result, "elapsed_time_seconds": elapsed_time})
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+
+        # This is the original function
+        start = time.perf_counter()
+        result = func(self, *args, **kwargs)
+        end = time.perf_counter()
+        elapsed_time = end - start
+        name = f"{func.__name__}_seconds"
+        if name not in self.metadata["times"]:
+            self.metadata["times"][name] = []
+        self.metadata["times"][name].append(elapsed_time)
+        return result
+
+    return wrapper

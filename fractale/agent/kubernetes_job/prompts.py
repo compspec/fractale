@@ -2,13 +2,16 @@ import fractale.agent.defaults as defaults
 from fractale.agent.prompts import prompt_wrapper
 
 # Requirements are separate to give to error helper agent
+# This should explicitly state what the agent is capable of doing.
 requires = """
 - Please deploy to the default namespace.
 - Do not create or require abstractions beyond the Job (no ConfigMap or Volume or other types)
 - Do not create or require external data. Use example data provided with the app or follow instructions.
 - Do not add resources, custom entrypoint/args, affinity, init containers, nodeSelector, or securityContext unless explicitly told to.
+- Do NOT add resource requests or limits. The pod should be able to use the full available resources and be Burstable.
 - Assume that needed software is on the PATH, and don't specify full paths to executables.
 - Set the backoff limit to 1, assuming if it does not work the first time, it will not.
+- You are only scoped to edit the Job manifest for Kubernetes.
 """
 
 common_instructions = (
@@ -36,7 +39,7 @@ def get_regenerate_prompt(context):
 
 
 generate_prompt = (
-    f"""You are a Kubernetes job generator service expert. I need to create a YAML manifest for a Kubernetes Job in an environment for '%s' for the exact container named '%s'.
+    """You are a Kubernetes job generator service expert. I need to create a YAML manifest for a Kubernetes Job in an environment for '%s' for the exact container named '%s'.
 
 Please generate a robust, production-ready manifest.
 """
@@ -58,7 +61,7 @@ def add_no_pull(prompt, no_pull=False):
     return prompt
 
 
-meta_bundle = f"""
+meta_bundle = """
 --- JOB DESCRIPTION ---
 %s
 
@@ -70,7 +73,4 @@ meta_bundle = f"""
 """
 
 failure_message = """Job failed during execution.
-
---- Diagnostics ---
-%s
 %s"""

@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from datetime import datetime
@@ -9,6 +10,7 @@ import fractale.agent.manager.prompts as prompts
 import fractale.utils as utils
 from fractale.agent.base import GeminiAgent
 from fractale.agent.context import Context
+from fractale.agent.decorators import timed
 from fractale.agent.manager.plan import Plan
 from fractale.utils.timer import Timer
 
@@ -22,55 +24,40 @@ class ManagerAgent(GeminiAgent):
     The manager can initialize other agents at the order it decides.
     """
 
-    def get_recovery_step(self, context, failed_step, message):
+    def get_recovery_step(self, context, failed_step, plan):
         """
         Uses Gemini to decide which agent to call to fix an error.
-        This is the intelligent error routing engine.
         """
-        print("GET RECOVERY STEP")
-        import IPython
+        # Only go up to the step we are at...
+        descriptions = ""
+        for step in plan.agents:
+            descriptions += f"- {step.agent}: {step.description}"
+            if step.agent == failed_step.agent:
+                break
 
-        IPython.embed()
-        # move to file
-        agent_descriptions = "\n".join(
-            [f"- {name}: {agent.description}" for name, agent in self.agents.items()]
-        )
+        prompt = prompts.recovery_prompt % (descriptions, failed_step.agent, context.error_message)
+        logger.warning("Consulting Manager Agent for error recovery plan...", title="Error Triage")
+        step = None
 
-        prompt = f"""
-        You are an expert AI workflow troubleshooter. A step in a workflow has failed. Your job is to analyze the error and recommend a single, corrective step.
-
-        Available Agents:
-        {agent_descriptions}
-
-        Context:
-        - The overall goal is to run a build-and-deploy workflow.
-        - The step using agent '{failed_step['agent_name']}' failed while trying to: {failed_step['task_description']}
-
-        Error Message:
-        ```
-        {error_message}
-        ```
-
-        Instructions:
-        1. Analyze the error message to determine the root cause (e.g., is it a Dockerfile syntax error, a Kubernetes resource issue, an image name typo, etc.?).
-        2. Decide which agent is best suited to fix this specific error.
-        3. Formulate a JSON object for the corrective step with two keys: "agent_name" and "task_description".
-        4. The new "task_description" MUST be a clear instruction for the agent to correct the specific error.
-
-        Provide only the single JSON object for the corrective step in your response.
-        """
-        logger.warning("Consulting LLM for error recovery plan...", title="Error Triage")
-
-        response = self.model.generate_content(prompt)
-
-        try:
-            text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
-            return json.loads(text)
-        except (json.JSONDecodeError, AttributeError):
-            logger.custom(
-                f"[bold red]Error: Could not parse recovery step from LLM response.[/bold red]\nFull Response:\n{response.text}",
-                title="[red]Critical Error[/red]",
-            )
+        while not step:
+            response = self.model.generate_content(prompt)
+            try:
+                step = json.loads(self.get_code_block(response.text, "json"))
+                if "agent_name" not in step:
+                    raise ValueError("Response is missing 'agent_name'")
+                if step["agent_name"] not in plan.agent_names:
+                    raise ValueError(
+                        f"Response 'agent_name' {step['agent_name']} is not a known agent for this plan."
+                    )
+            except Exception as e:
+                step = None
+                prompt = prompts.recovery_error_prompt % (
+                    descriptions,
+                    failed_step.agent,
+                    context.error_message,
+                    e,
+                )
+        return step
 
     def save_results(self, tracker):
         """
@@ -85,6 +72,7 @@ class ManagerAgent(GeminiAgent):
         results_file = os.path.join(self.results_dir, f"results-{timestamp}.json")
         utils.write_json(tracker, results_file)
 
+    @timed
     def run(self, context):
         """
         Executes a plan-driven workflow with intelligent error recovery. How it can work:
@@ -93,14 +81,24 @@ class ManagerAgent(GeminiAgent):
         2. Each agent can define initial inputs.
         3. A context directory is handed between agents. Each agent will be given the complete context.
         """
+        # The context is managed, meaning we return updated contexts
+        context["managed"] = True
+
+        # Store raw context for restore
+        self._context = copy.deepcopy(context)
+
         # Create a global context
         context = Context(context)
 
-        # The context is managed, meaning we return updated contexts
-        context.managed = True
+        # We shouldn't allow the manager to go forever
+        self.max_attempts = self.max_attempts or 10
 
         # Load plan (required) and pass on setting to use cache to agents
-        plan = Plan(context.get("plan", required=True), use_cache=self.use_cache)
+        plan = Plan(
+            context.get("plan", required=True),
+            use_cache=self.use_cache,
+            save_incremental=self.save_incremental,
+        )
 
         # The manager model works as the orchestrator of work.
         logger.custom(
@@ -119,10 +117,33 @@ class ManagerAgent(GeminiAgent):
 
         # Raise for now so I can see the issue.
         except Exception as e:
-            raise e
             logger.error(
                 f"Orchestration failed:\n{str(e)}", title="Orchestration Failed", expand=False
             )
+            raise e
+
+    def restore_context(self):
+        """
+        Get a new, updated context.
+        """
+        context = copy.deepcopy(self._context)
+        context.manager = True
+        return context
+
+    def reset_context(self, context, plan, failed_step=None):
+        """
+        reset context up to failed state.
+
+        If no failed state provided, reset the entire thing.
+        """
+        for step in plan.agents:
+            context = step.reset_context(context)
+            for key in ["result", "return_code"]:
+                if key in context:
+                    del context[key]
+            if failed_step is not None and step.agent == failed_step.agent:
+                break
+        return context
 
     def run_tasks(self, context, plan):
         """
@@ -131,34 +152,21 @@ class ManagerAgent(GeminiAgent):
         Each step in the plan can have a maximum number of attempts.
         """
         # These are top level attempts. Each agent has its own counter
-        # that is allowed to go up to some limit.
-
-        attempts = {}
-        # Keep track of sequence of agent running times and sequence, and times
+        # that is allowed to go up to some limit. The manager will
+        # attempt the entire thing some number of times. Note that
+        # I haven't tested this yet.
         tracker = []
         timer = Timer()
         current_step_index = 0
 
-        # Keep going until the plan is done, or max attempts reached for a step
+        # Keep going until the plan is done, or max attempts reached for the manager
+        # Each step has its own internal max attempts (just another agent)
         while current_step_index < len(plan):
             # Get the step - we already have validated the agent
             step = plan[current_step_index]
-
-            # Keep track of attempts and check if we've gone over
-            if step.agent not in attempts:
-                attempts[step.agent] = 0
-
-            # Each time build runs, it has its own internal attempts counter.
-            # Important: this counter is external (different) for the entire step
-            # which has some number of internal attempts that reset each time
-            if step.reached_maximum_attempts(attempts[step.agent]):
-                print(f"[red]Agent '{step.agent}' has reached max attempts {step.attempts}.[/red]")
-                break
-            attempts[step.agent] += 1
-
             logger.custom(
                 f"Executing step {current_step_index + 1}/{len(plan)} with agent [bold cyan]{step.agent}[/bold cyan]",
-                title=f"[blue]Orchestrator Attempt {attempts[step.agent]}[/blue]",
+                title=f"[blue]Orchestrator Attempt {self.attempts}[/blue]",
             )
 
             # Execute the agent.
@@ -173,10 +181,11 @@ class ManagerAgent(GeminiAgent):
             tracker.append(
                 {
                     "agent": step.agent,
-                    "elapsed_time_seconds": timer.elapsed_time,
+                    "total_seconds": timer.elapsed_time,
                     "result": context.get("result"),
-                    "attempts": step.attempts,
-                    "logs": step.logs,
+                    # We start counting at 0
+                    "attempts": step.attempts + 1,
+                    "metadata": step.logs(),
                 }
             )
 
@@ -189,43 +198,33 @@ class ManagerAgent(GeminiAgent):
 
             # If we reach max attempts and no success, we need to intervene
             else:
-                print("STEP NOT SUCCESSFUL: TODO what to do here?")
-                # Try getting recovery step and ask manager to choose next action
-                import IPython
-
-                IPython.embed()
-
-                # This is the intiial (cleaned) prompt to give the manager context
-                instruction = step.get_initial_prompt(context)
-
-                # Give the error message to the manager to triage
-                prompt = prompts.get_retry_prompt(instruction, context.result)
-                response = self.ask_gemini(prompt, with_history=False)
-                logger.error(
-                    f"Step failed. Instruction to agent:\n{context.result}",
-                    title=f"Manager Instruction: {step.agent}",
-                    expand=False,
-                )
-                context.reset()
-                context.error_message = response
-                continue
-
-                # TODO: we eventually want to allow the LLM to choose a step
-                # At this point we need to get a recovery step, and include the entire context
-                # up to that point.
-                recovery_step = self.get_recovery_step(context, step, message)
-                if recovery_step:
-                    logger.warning()
-                    print(
-                        f"Inserting recovery step from agent [bold cyan]{recovery_step['agent_name']}[/bold cyan].",
-                        title="Recovery Plan",
-                    )
-                    # TODO this shouldn't be an insert, but a find and replace and then
-                    # updating of the index to supoprt that.
-                    plan.insert(current_step_index, recovery_step)
-                else:
-                    print("[red]Could not determine recovery step. Aborting workflow.[/red]")
+                # Do we try again? If we reached max, break to cut out of loop
+                if self.reached_max_attempts():
                     break
+
+                # Otherwise, we want to get a recovery step and keep going
+                self.attempts += 1
+
+                # If we are at the first step, just reset and try again.
+                if current_step_index == 0:
+                    context = self.reset_context(context, plan=plan)
+                    continue
+
+                # Allow the LLM to choose a step
+                # At this point we need to get a recovery step, and include the entire context
+                recovery_step = self.get_recovery_step(context, step, plan)
+                print(
+                    f"Attempting recovery step from agent [bold cyan]{recovery_step['agent_name']}[/bold cyan].",
+                )
+                current_step_index = [
+                    i
+                    for i, step in enumerate(plan.agents)
+                    if step.agent == recovery_step["agent_name"]
+                ][0]
+                # Reset the context. This removes output and stateful variables UP TO the failed
+                # step so we don't give context that leads to another erroneous state
+                context = self.reset_context(context, plan, step)
+                continue
 
             # If successful, reset the context for the next step.
             # This resets return code and result only.

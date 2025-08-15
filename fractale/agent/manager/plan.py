@@ -1,11 +1,8 @@
-import copy
-
 import jsonschema
 from jsonschema import validators
 from rich import print
 
 import fractale.utils as utils
-from fractale.agent.context import get_context
 
 
 def set_defaults(validator, properties, instance, schema):
@@ -56,11 +53,12 @@ class Plan:
     A plan for a manager includes one or more agents and a goal.
     """
 
-    def __init__(self, plan_path, use_cache=False):
+    def __init__(self, plan_path, use_cache=False, save_incremental=False):
         self.plan_path = plan_path
         self.plan = utils.read_yaml(plan_path)
         self.agent_names = set()
         self.use_cache = use_cache
+        self.save_incremental = save_incremental
 
         self.validate()
         self.load()
@@ -81,7 +79,12 @@ class Plan:
                 raise ValueError(f"Agent {spec['agent']} is not known.")
 
             # Add the agent to the step
-            step = Step(spec, known_agents[agent_name], use_cache=self.use_cache)
+            step = Step(
+                spec,
+                known_agents[agent_name],
+                use_cache=self.use_cache,
+                save_incremental=self.save_incremental,
+            )
 
             # The agents are retrieved via index
             self.agents.append(step)
@@ -116,13 +119,26 @@ class Plan:
 
 
 class Step:
-    def __init__(self, step, agent, use_cache=False):
+    """
+    A step is a simple abstraction to hold an agent and a plan.
+
+    It could be unecessary, but I am keeping for now.
+    """
+
+    def __init__(self, step, agent, use_cache=False, save_incremental=False):
         self.step = step
-        self._agent = agent(use_cache=use_cache)
 
         # If the step context defines a max number of attempts, set it for the agent
         max_attempts = self.step["context"].get("max_attempts")
-        self._agent.set_max_attempts(max_attempts)
+        self._agent = agent(
+            use_cache=use_cache, save_incremental=save_incremental, max_attempts=max_attempts
+        )
+
+    def logs(self):
+        """
+        Courtesy function to expose agent logs.
+        """
+        return self._agent.metadata
 
     def update(self, context):
         """
@@ -137,12 +153,6 @@ class Step:
                 context[k] = v
         return context
 
-    def get_initial_prompt(self, context):
-        """
-        More easily expose the get_initial_prompt function on the agent.
-        """
-        return self._agent.get_initial_prompt(context)
-
     def execute(self, context):
         """
         Execute a plan step (associated with an agent)
@@ -153,31 +163,33 @@ class Step:
         # This is the context returned
         return self._agent.run(context)
 
+    def mark_retry(self):
+        """
+        A function to mark that the entire plan was retried.
+        """
+        self._agent.metadata["retries"] += 1
+
     @property
     def agent(self):
         return self.get("agent")
 
     @property
+    def attempts(self):
+        return self._agent.attempts
+
+    @property
     def context(self):
         return self.get("context")
 
-    @property
-    def attempts(self):
-        return self.get("attempts")
+    def reset_context(
+        self,
+        context,
+    ):
+        return self._agent.reset_context(context)
 
     @property
     def description(self):
         return self.get("description", f"This is a {self.agent} agent.")
-
-    def reached_maximum_attempts(self, attempts):
-        """
-        Determine if we have reached maximum attempts for the step.
-        """
-        if self.attempts is None:
-            return False
-        if self.attempts > attempts:
-            return True
-        return False
 
     def get(self, name, default=None):
         return self.step.get(name) or default

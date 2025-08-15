@@ -13,23 +13,14 @@ import yaml
 from rich import print
 from rich.syntax import Syntax
 
+import fractale.agent.kubernetes_job.objects as objects
 import fractale.agent.kubernetes_job.prompts as prompts
 import fractale.agent.logger as logger
 import fractale.utils as utils
 from fractale.agent.base import GeminiAgent
 from fractale.agent.context import get_context
+from fractale.agent.decorators import timed
 from fractale.agent.errors import DebugAgent
-
-yaml_pattern = r"```(?:yaml)?\n(.*?)```"
-
-# All the ways a container can go wrong... (upside down smiley face)
-container_issues = [
-    "ImagePullBackOff",
-    "ErrImagePull",
-    "ErrImageNeverPull",
-    "CrashLoopBackOff",
-    "CreateContainerConfigError",
-]
 
 
 class KubernetesJobAgent(GeminiAgent):
@@ -39,9 +30,7 @@ class KubernetesJobAgent(GeminiAgent):
 
     name = "kubernetes-job"
     description = "Kubernetes Job agent"
-
-    # Arbitrary max tries for class...
-    max_tries = 25
+    result_type = "kubernetes-job-manifest"
 
     def _add_arguments(self, subparser):
         """
@@ -84,7 +73,8 @@ class KubernetesJobAgent(GeminiAgent):
             prompt = prompts.get_generate_prompt(context)
         return prompt
 
-    def _run(self, context):
+    @timed
+    def run_step(self, context):
         """
         Run the agent.
         """
@@ -92,7 +82,7 @@ class KubernetesJobAgent(GeminiAgent):
         context = self.add_build_context(context)
 
         # This will either generate fresh or rebuild erroneous Job
-        job_crd = self.generate_crd(context)
+        job_crd = self.generate_job_manifest(context)
         logger.custom(job_crd, title="[green]job.yaml[/green]", border_style="green")
 
         # Make and deploy it! Success is exit code 0.
@@ -101,26 +91,34 @@ class KubernetesJobAgent(GeminiAgent):
             self.print_result(job_crd)
             logger.success(f"Deploy complete in {self.attempts} attempts")
         else:
-            logger.error(f"Build failed:\n{output[-1000:]}", title="Deploy Status")
+            logger.error(f"Deploy failed:\n{output[-1000:]}", title="Deploy Status")
             print("\n[bold cyan] Requesting Correction from Kubernetes Job Agent[/bold cyan]")
-            self.attempts += 1
 
             # Ask the debug agent to better instruct the error message
             context.error_message = output
-            agent = DebugAgent()
+
             # This updates the error message to be the output
-            context = agent.run(context, requires=prompts.requires)
+            context = DebugAgent().run(context, requires=prompts.requires)
 
             # Return early based on max attempts
-            # if self.return_on_failure():
-            #    context.return_code = -1
-            #    context.result = output
-            #    return self.get_result(context)
+            if self.reached_max_attempts() or context.get("return_to_manager") is True:
+                context.return_to_manager = False
+
+                # If we are being managed, return the result
+                if context.is_managed():
+                    context.return_code = -1
+                    context.result = context.error_message
+                    return context
+
+                # Otherwise this is a failure state
+                logger.exit(f"Max attempts {self.max_attempts} reached.", title="Agent Failure")
+
+            self.attempts += 1
 
             # Trigger again, provide initial context and error message
             # This is the internal loop running, no manager agent
             context.result = job_crd
-            return self.run(context)
+            return self.run_step(context)
 
         self.write_file(context, job_crd)
         return context
@@ -146,177 +144,30 @@ class KubernetesJobAgent(GeminiAgent):
             highlighted_syntax, title="Final Kubernetes Job", border_style="green", expand=True
         )
 
-    def get_diagnostics(self, job_name, namespace):
+    def get_diagnostics(self, job, pod):
         """
         Helper to collect rich error data for a failed job.
         """
         print("[yellow]Gathering diagnostics for failed job...[/yellow]")
-        print('TODO streamline')
-        import IPython 
-        IPython.embed()
+        pod_status = pod.get_filtered_status()
+        job_status = job.get_filtered_status()
 
-        describe_job_cmd = ["kubectl", "describe", "job", job_name, "-n", namespace]
-        job_description = subprocess.run(
-            describe_job_cmd, capture_output=True, text=True, check=False
-        ).stdout
+        # Use json.dumps because it's more compact (maybe fewer tokens)
+        pod_events = pod.get_events()
+        job_events = job.get_events()
+        events = sorted(job_events + pod_events, key=lambda e: e.get("lastTimestamp", ""))
+        job_description = json.dumps(job_status)
+        pods_description = json.dumps(pod_status)
+        events_description = json.dumps(events)
+        full_logs = job.get_logs()
 
-        describe_pods_cmd = [
-            "kubectl",
-            "describe",
-            "pod",
-            "-l",
-            f"job-name={job_name}",
-            "-n",
-            namespace,
-        ]
-        pods_description = subprocess.run(
-            describe_pods_cmd, capture_output=True, text=True, check=False
-        ).stdout
+        # Get job and pod events, add lgs if we have them.
+        diagnostics = prompts.meta_bundle % (job_description, pods_description, events_description)
+        if full_logs:
+            return diagnostics + full_logs
+        return diagnostics
 
-        get_events_cmd = ["kubectl", "get", "events", "-n", namespace, "--sort-by=lastTimestamp"]
-        events = subprocess.run(get_events_cmd, capture_output=True, text=True, check=False).stdout
-        return prompts.meta_bundle % (job_description, pods_description, events)
-
-    def wait_for_pod_complete(self, pod_name, namespace):
-        """
-        Wait for a pod to be ready.
-        """
-        for j in range(self.max_tries):
-            pod_status = self.pod_status(pod_name, namespace)
-            pod_phase = pod_status.get("phase")
-
-            # Let's assume when we are running the pod is ready for logs.
-            # If not, we need to check container statuses too.
-            if pod_phase in ["Succeeded", "Failed"]:
-                return True
-
-            print(
-                f"[dim]Pod '{pod_name}' has status '{pod_phase}'. Waiting... ({j+1}/{self.max_tries})[/dim]"
-            )
-            time.sleep(2)
-
-        # If we get here, fail and timeout
-        print(f"[red]Pod '{pod_name}' never reached completed status, state is unknown[/red]")
-        return False
-
-    def pod_status(self, pod_name, namespace):
-        """
-        Get pod status (subset of info)
-        """
-        return self.pod_info(pod_name, namespace).get("status", {})
-
-    def pod_info(self, pod_name, namespace):
-        """
-        Helper function to get pod status
-        """
-        # 25 x 5 seconds == 10 minutes
-        for _ in range(self.max_tries):
-            pod_proc = subprocess.run(
-                ["kubectl", "get", "pod", pod_name, "-n", namespace, "-o", "json"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if pod_proc.returncode != 0:
-                time.sleep(5)
-                continue
-
-            return json.loads(pod_proc.stdout)
-
-    def wait_for_pod_ready(self, pod_name, namespace):
-        """
-        Wait for a pod to be ready.
-        """
-        for _ in range(self.max_tries):
-            pod_status = self.pod_status(pod_name, namespace)
-            pod_phase = pod_status.get("phase")
-
-            # Let's assume when we are running the pod is ready for logs.
-            # If not, we need to check container statuses too.
-            if pod_phase == "Running":
-                print(f"[green]Pod '{pod_name}' entered running phase.[/green]")
-                return True
-
-            if pod_phase in ["Succeeded", "Failed"]:
-                print(
-                    f"[yellow]Pod '{pod_name}' entered terminal phase '{pod_phase}' before logging could start.[/yellow]"
-                )
-                return True
-
-            # If we get here, not ready - sleep and try again.
-            print(
-                f"[dim]Pod '{pod_name}' has status '{pod_phase}'. Waiting... ({j+1}/{self.max_tries})[/dim]"
-            )
-            time.sleep(25)
-
-        # If we get here, fail and timeout
-        print(f"[red]Pod '{pod_name}' never reached running status, state is unknown[/red]")
-        return False
-
-    def wait_for_job(self, job_name, namespace):
-        """
-        Wait for a job to be active and fail or succeed.
-        """
-        is_active, is_failed, is_succeeded = False, False, False
-
-        # Poll for 10 minutes. This assumes a large container that needs to pull
-        for i in range(60):  # 60 * 10s = 600s = 10 minutes
-            get_status_cmd = ["kubectl", "get", "job", job_name, "-n", namespace, "-o", "json"]
-            status_process = subprocess.run(
-                get_status_cmd, capture_output=True, text=True, check=False
-            )
-            if status_process.returncode != 0:
-                time.sleep(10)
-                continue
-
-            status = json.loads(status_process.stdout).get("status", {})
-            if status.get("succeeded", 0) > 0:
-                print("[green]✅ Job succeeded before log streaming began.[/green]")
-                is_succeeded = True
-                break
-
-            if status.get("failed", 0) > 0:
-                print("[red]❌ Job entered failed state.[/red]")
-                is_failed = True
-                break
-
-            if status.get("active", 0) > 0:
-                print("[green]Job is active. Attaching to logs...[/green]")
-                is_active = True
-                break
-
-            print(f"[dim]Still waiting... ({i+1}/30)[/dim]")
-            time.sleep(10)
-        return is_active, is_failed, is_succeeded
-
-    def get_pod_name_for_job(self, job_name, namespace):
-        """
-        Find the name of the pod created by a specific job.
-        """
-        cmd = [
-            "kubectl",
-            "get",
-            "pods",
-            "-n",
-            namespace,
-            "-l",
-            f"job-name={job_name}",
-            "-o",
-            "jsonpath={.items[0].metadata.name}",
-        ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        return proc.stdout.strip() or None
-
-    def cleanup_job(self, job_name, namespace):
-        """
-        Delete job so we can create again.
-        """
-        subprocess.run(
-            ["kubectl", "delete", "job", job_name, "-n", namespace, "--ignore-not-found"],
-            capture_output=True,
-            check=False,
-        )
-
+    @timed
     def deploy(self, context):
         """
         Deploy the Kubernetes Job.
@@ -338,7 +189,7 @@ class KubernetesJobAgent(GeminiAgent):
         job_name = job_data.get("metadata", {}).get("name")
         namespace = job_data.get("metadata", {}).get("namespace", "default")
         if not job_name:
-            return (1, f"Generated YAML is missing required '.metadata.name' field.")
+            return 1, "Generated YAML is missing required '.metadata.name' field."
 
         # If it doesn't follow instructions...
         containers = (
@@ -361,6 +212,17 @@ class KubernetesJobAgent(GeminiAgent):
         deploy_dir = tempfile.mkdtemp()
         print(f"[dim]Created temporary deploy context: {deploy_dir}[/dim]")
 
+        # The debugger can decide to give the user an interactive session
+        # For interactive, we set the command to sleep infinity
+        if context.get("interactive") is True:
+            logger.info(
+                f"Starting Interative Debugging Session: job manifest at => {job_manifest_path}\nType 'exit' when done."
+            )
+            command = job_data["spec"]["template"]["spec"]["containers"][0]["command"]
+            logger.custom(f"  Initial command: {command}")
+            job_data["spec"]["template"]["spec"]["containers"][0]["command"] = ["sleep", "infinity"]
+            job_crd = yaml.dump(job_data)
+
         # Write the manifest to a temporary directory
         job_manifest_path = os.path.join(deploy_dir, "job.yaml")
         utils.write_file(job_crd, job_manifest_path)
@@ -380,17 +242,27 @@ class KubernetesJobAgent(GeminiAgent):
 
         print("[green]✅ Manifest applied successfully.[/green]")
 
+        # For interactive, we set the command to sleep infinity
+        if context.get("interactive") is True:
+            context.interactive = False
+            import IPython
+
+            IPython.embed()
+
         # 2. We then need to wait until the job is running or fails
         print("[yellow]Waiting for Job to start... (Timeout: 5 minutes)[/yellow]")
-        pod_name = None
+
+        # Create job objects (and eventually pod)
+        job = objects.KubernetesJob(job_name, namespace)
+        pod = None
 
         # This assumes a backoff / retry of 1, so we aren't doing recreation
         # If it fails once, it fails once and for all.
-        # 60 * 5s = 300s (5 minutes!)
-        for i in range(60):
+        # 30 * 5s = 150s (2.5 minutes!)
+        for i in range(30):
 
             # 1. Check the parent Job's status for a quick terminal state
-            job_status = self.get_job_status(job_name, namespace)
+            job_status = job.get_status()
             if job_status and job_status.get("succeeded", 0) > 0:
                 # The job is done, try to get logs and report success
                 print("[green]✅ Job has Succeeded.[/green]")
@@ -399,20 +271,19 @@ class KubernetesJobAgent(GeminiAgent):
             # Womp womp
             if job_status.get("failed", 0) > 0:
                 logger.error("Job reports Failed.", title="Job Status")
-                diagnostics = self.get_diagnostics(job_name, namespace)
-                self.cleanup_job(job_name, namespace)
+                diagnostics = self.get_diagnostics(job, pod)
+                job.delete()
                 return (
                     1,
                     f"Job entered failed state. This usually happens after repeated pod failures.\n\n{diagnostics}",
                 )
 
             # 2. If the job isn't terminal, find the pod. It may not exist yet.
-            if not pod_name:
-                pod_name = self.get_pod_name_for_job(job_name, namespace)
+            pod = pod or job.get_pod_name()
 
             # 3. If a pod exists, inspect it deeply for fatal errors or readiness.
-            if pod_name:
-                pod_info = self.pod_info(pod_name, namespace)
+            if pod:
+                pod_info = pod.get_info()
                 if pod_info:
                     pod_status = pod_info.get("status", {})
                     pod_phase = pod_status.get("phase")
@@ -422,41 +293,34 @@ class KubernetesJobAgent(GeminiAgent):
                     if pod_phase == "Running":
                         container_statuses = pod_status.get("containerStatuses", [])
                         if all(cs.get("ready") for cs in container_statuses):
-                            print(f"[green]✅ Pod '{pod_name}' is Ready.[/green]")
+                            print(f"[green]✅ Pod '{pod.name}' is Ready.[/green]")
                             break
 
                     # If the pod succeeded already, we can also proceed...
                     if pod_phase == "Succeeded":
-                        print(f"[green]✅ Pod '{pod_name}' has Succeeded.[/green]")
+                        print(f"[green]✅ Pod '{pod.name}' has Succeeded.[/green]")
                         break
 
                     # This is important because a pod can be active, but then go into a crashed state
-                    container_statuses = pod_status.get("containerStatuses", [])
-                    for cs in container_statuses:
-                        if cs.get("state", {}).get("waiting"):
-                            reason = cs["state"]["waiting"].get("reason")
-                            if reason in container_issues:
-                                message = cs["state"]["waiting"].get("message")
-                                logger.error(
-                                    f"Pod has a fatal container status: {reason}", title="Pod Error"
-                                )
-                                diagnostics = self.get_diagnostics(job_name, namespace)
-                                self.cleanup_job(job_name, namespace)
-                                return (
-                                    1,
-                                    f"Pod '{pod_name}' is stuck in a fatal state: {reason}\nMessage: {message}\n\n{diagnostics}",
-                                )
+                    # We provide the status that coincides with our info query to be consistent
+                    if reason := pod.has_failed_container(pod_status):
+                        diagnostics = self.get_diagnostics(job, pod)
+                        job.delete()
+                        return (
+                            1,
+                            f"Pod '{pod.name}' is stuck in a fatal state: {reason}\n\n{diagnostics}",
+                        )
 
                     print(
-                        f"[dim]Job is active, Pod '{pod_name}' has status '{pod_phase}'. Waiting... ({i+1}/60)[/dim]"
+                        f"[dim]Job is active, Pod '{pod.name}' has status '{pod_phase}'. Waiting... ({i+1}/60)[/dim]"
                     )
 
                 # This means we saw the pod name, but didn't get pod info / it disappeared - let loop continue
                 else:
                     print(
-                        f"[dim]Job is active, but Pod '{pod_name}' disappeared. Waiting for new pod... ({i+1}/60)[/dim]"
+                        f"[dim]Job is active, but Pod '{pod.name}' disappeared. Waiting for new pod... ({i+1}/60)[/dim]"
                     )
-                    pod_name = None
+                    pod = None
 
             # No pod yet, keep waiting.
             else:
@@ -466,7 +330,7 @@ class KubernetesJobAgent(GeminiAgent):
 
         # This gets hit when the loop is done, so we probably have a timeout
         else:
-            diagnostics = self.get_diagnostics(job_name, namespace)
+            diagnostics = self.get_diagnostics(job, pod)
             return (
                 1,
                 f"Timeout: Job did not reach a stable running or completed state within the time limit.\n\n{diagnostics}",
@@ -474,82 +338,59 @@ class KubernetesJobAgent(GeminiAgent):
 
         # Let's try to stream logs!
         print("[green]🚀 Proceeding to stream logs...[/green]")
-        full_logs = self.get_job_logs(job_name, namespace)
+        full_logs = job.get_logs()
+        pod.wait_for_ready()
 
-        # Wait for pod to be ready, then we can get logs
-        self.wait_for_pod_ready(pod_name, namespace)
+        # Save logs regardless of success or not (so we see change)
+        self.save_log(full_logs)
 
         # The above command will wait for the job to complete, so this should be OK to do.
         is_active = True
         while is_active:
-            final_status = self.get_job_status(job_name, namespace)
+            final_status = job.get_status()
             is_active = final_status.get("active", 0) > 0
             time.sleep(5)
 
-        diagnostics = self.get_diagnostics(job_name, namespace)
-
         # But did it succeed?
         if final_status.get("succeeded", 0) > 0:
-            print(f"\n[green]✅ Job final status is Succeeded.[/green]")
+            print("\n[green]✅ Job final status is Succeeded.[/green]")
         else:
             print("\n[red]❌ Job final status is Failed.[/red]")
-            diagnostics = self.get_diagnostics(job_name, namespace)
-            self.cleanup_job(job_name, namespace)
+            diagnostics = self.get_diagnostics(job, pod)
+            job.delete()
             # We already have the logs, so we can pass them directly.
-            return 1, prompts.failure_message % (diagnostics, full_logs)
+            return 1, prompts.failure_message % diagnostics
 
         if cleanup and os.path.exists(deploy_dir):
             print(f"[dim]Cleaning up temporary deploy directory: {deploy_dir}[/dim]")
-            self.cleanup_job(job_name, namespace)
+            job.delete()
             shutil.rmtree(deploy_dir, ignore_errors=True)
+
+        # Save full logs for the step
         return 0, full_logs
 
-    def get_job_logs(self, job_name, namespace):
+    def save_log(self, full_logs):
         """
-        Get the logs of a pod.
+        Save logs to metadata
         """
-        full_logs = ""
-        # We use the job selector to get logs, which is more robust if the pod was recreated.
-        log_cmd = ["kubectl", "logs", "-f", f"job/{job_name}", "-n", namespace]
-        with subprocess.Popen(
-            log_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
-        ) as log_process:
-            # We can add a timeout to the log streaming itself if needed
-            # For now, we wait for it to complete naturally.
-            full_logs = "".join(log_process.stdout)
-        return full_logs
+        if self.save_incremental:
+            if "logs" not in self.metadata["assets"]:
+                self.metadata["assets"]["logs"] = []
+            self.metadata["assets"]["logs"].append({"item": full_logs, "attempt": self.attempts})
 
-    def get_job_status(self, job_name, namespace):
+    def save_job_manifest(self, job):
         """
-        Get job status
+        Save job manifest to metadata
         """
-        final_status_proc = subprocess.run(
-            ["kubectl", "get", "job", job_name, "-n", namespace, "-o", "json"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return json.loads(final_status_proc.stdout).get("status", {})
+        if self.save_incremental:
+            if self.result_type not in self.metadata["assets"]:
+                self.metadata["assets"][self.result_type] = []
+            self.metadata["assets"][self.result_type].append(
+                {"item": job, "attempt": self.attempts}
+            )
 
-    def get_job_status(self, job_name, namespace):
-        """
-        Get the job status, return None if not possible.
-        """
-        job_info = subprocess.run(
-            ["kubectl", "get", "job", job_name, "-n", namespace, "-o", "json"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if job_info.returncode == 0:
-            return json.loads(job_info.stdout).get("status", {})
-
-    def generate_crd(self, context):
+    @timed
+    def generate_job_manifest(self, context):
         """
         Generates or refines an existing Job CRD using the Gemini API.
         """
@@ -562,15 +403,9 @@ class KubernetesJobAgent(GeminiAgent):
 
         # Try to remove code (Dockerfile, manifest, etc.) from the block
         try:
-            content = self.get_code_block(content, "yaml")
-
-            # If we are getting commentary...
-            match = re.search(yaml_pattern, content, re.DOTALL)
-            if match:
-                job_crd = match.group(1).strip()
-            else:
-                job_crd = content.strip()
+            job_crd = self.get_code_block(content, "yaml")
             context.result = job_crd
+            self.save_job_manifest(job_crd)
             return job_crd
 
         except Exception as e:

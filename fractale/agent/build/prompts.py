@@ -9,6 +9,7 @@ requires = """
 - Assume a default of CPU if GPU or CPU is not stated.
 - Do not do a multi-stage build, and do not COPY or ADD anything.
 - Try to place executables on the PATH so they do not need to be discovered.
+- You are only scoped to edit a Dockerfile to build the image.
 """
 
 common_instructions = (

@@ -1,13 +1,16 @@
+import copy
 import os
+import re
 import sys
+import time
 
 import google.generativeai as genai
 
-from fractale.agent.decorators import callback, save_logs
 import fractale.agent.defaults as defaults
 import fractale.agent.logger as logger
 import fractale.utils as utils
 from fractale.agent.context import get_context
+from fractale.agent.decorators import save_result, timed
 
 
 class Agent:
@@ -22,37 +25,37 @@ class Agent:
     """
 
     # name and description should be on the class
+    state_variables = ["result", "error_message"]
 
-    def __init__(self, use_cache=False, results_dir=None, incremental=False):
+    def __init__(
+        self, use_cache=False, results_dir=None, save_incremental=False, max_attempts=None
+    ):
+        self.attempts = 0
+        self.max_attempts = max_attempts
 
-        # Max attempts defaults to unlimited
-        # We start counting at 1 for the user to see.
-        # Eat your heart out, Matlab.
-        self.attempts = 1
-        self.max_attempts = None
-
-        # For now, assume this is for the manager.
+        # For now, assume these are for the manager.
+        # They get added to other agents via the step creation
         # We can optionally save incremental result objects
         self.results_dir = results_dir or os.getcwd()
-        self.save_incremental = incremental
+        self.save_incremental = save_incremental
 
         # The user can save if desired - caching the context to skip steps that already run.
         self.setup_cache(use_cache)
 
         # This supports saving custom logs and step (attempt) metadata
-        self.metadata = {}
+        self.init_metadata()
 
         # Custom initialization functions
         self.init()
 
-    @callback(save_logs)
+    def init_metadata(self):
+        self.metadata = {"times": {}, "assets": {}, "ask_gemini": [], "retries": 0, "failures": []}
+
+    @save_result
     def run(self, context):
         """
         Run the agent - a wrapper around internal function _run that prepares it.
         """
-        # Init attempts. Each agent has an internal counter for total attempts
-        self.attempts = self.attempts or 1
-
         # Load cached context. This is assumed to override user provided args
         # If we have a saved context, we assume we want to use it, return early
         cached_context = self.load_cache()
@@ -66,7 +69,8 @@ class Agent:
         context = get_context(context)
 
         # Run, wrapping with a load and save of cache
-        context = self._run(context)
+        # This will return here when the internal loop is done
+        context = self.run_step(context)
         self.save_cache(context)
         return context
 
@@ -78,6 +82,32 @@ class Agent:
         Print a result object, if it exists.
         """
         pass
+
+    def reset_context(self, context):
+        """
+        Remove output and any stateful variables. This is assuming we
+        are starting again.
+        """
+        for key in self.state_variables:
+            if key in context:
+                del context[key]
+
+        # Since we will try again, let's move current metadata into a subsection
+        metadata = copy.deepcopy(self.metadata)
+
+        # We don't want this to recurse forever
+        failures = metadata.get("failures") or []
+        if "failures" in metadata:
+            del metadata["failures"]
+        failures.append(metadata)
+
+        # Reset metadata, save retries
+        self.init_metadata()
+        self.metadata["failures"] = failures
+        self.metadata["retries"] = metadata["retries"]
+
+        # We don't need a return here, but let's be explicit
+        return context
 
     def setup_cache(self, use_cache=False):
         """
@@ -132,10 +162,7 @@ class Agent:
         # Unset (None) or 1.
         if not self.max_attempts:
             return False
-        return self.attempts >= self.max_attempts
-
-    def set_max_attempts(self, max_attempts):
-        self.max_attempts = max_attempts
+        return self.attempts > self.max_attempts
 
     def add_shared_arguments(self, agent):
         """
@@ -199,28 +226,24 @@ class Agent:
         """
         Parse a code block from the response
         """
+        pattern = f"```(?:{code_type})?\n(.*?)```"
+        match = re.search(pattern, content, re.DOTALL)
+        if match:
+            return match.group(1).strip()
         if content.startswith(f"```{code_type}"):
             content = content[len(f"```{code_type}") :]
         if content.startswith("```"):
             content = content[len("```") :]
         if content.endswith("```"):
             content = content[: -len("```")]
-        return content
+        return content.strip()
 
-    def _run(self, context):
+    def run_step(self, context):
         """
         Run the agent. This expects to be called with a loaded context.
         """
         assert context
         raise NotImplementedError(f"The {self.name} agent is missing internal 'run' function")
-
-    def get_initial_prompt(self, context):
-        """
-        Get the initial prompt (with details) to provide context to the manager.
-
-        If we don't do this, the manager can provide a bad instruction for how to fix the error.
-        """
-        return self.get_prompt(context)
 
     def get_prompt(self, context):
         """
@@ -244,15 +267,27 @@ class GeminiAgent(Agent):
         except KeyError:
             sys.exit("ERROR: GEMINI_API_KEY environment variable not set.")
 
+    # We don't add timed here because we do it custom
     def ask_gemini(self, prompt, with_history=True):
         """
         Ask gemini adds a wrapper with some error handling.
         """
+        # Always remove lines with empty spaces
+        if len(prompt) > 15000:
+            print("FOUND CHONKER PROMPT")
+            import IPython
+
+            IPython.embed()
         try:
+            start = time.perf_counter()
             if with_history:
                 response = self.chat.send_message(prompt)
             else:
                 response = self.model.generate_content(prompt)
+            end = time.perf_counter()
+
+            if self.save_incremental:
+                self.save_gemini_metadata(end - start, response, with_history)
 
             # This line can fail. If it succeeds, return entire response
             return response.text.strip()
@@ -260,3 +295,17 @@ class GeminiAgent(Agent):
         except ValueError as e:
             print(f"[Error] The API response was blocked and contained no text: {str(e)}")
             return "GEMINI ERROR: The API returned an error (or stop) and we need to try again."
+
+    def save_gemini_metadata(self, elapsed_time, response, with_history):
+        """
+        Save gemini response metadata and elapsed time
+        """
+        self.metadata["ask_gemini"].append(
+            {
+                "conversation_history": with_history,
+                "prompt_token_count": response.usage_metadata.prompt_token_count,
+                "candidates_token_count": response.usage_metadata.candidates_token_count,
+                "total_token_count": response.usage_metadata.total_token_count,
+                "time_seconds": elapsed_time,
+            }
+        )

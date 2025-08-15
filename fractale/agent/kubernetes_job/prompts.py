@@ -36,7 +36,7 @@ def get_regenerate_prompt(context):
 
 
 generate_prompt = (
-    f"""You are a Kubernetes job generator service expert. I need to create a YAML manifest for a Kubernetes Job in an environment for '%s' for the exact container named '%s'.
+    """You are a Kubernetes job generator service expert. I need to create a YAML manifest for a Kubernetes Job in an environment for '%s' for the exact container named '%s'.
 
 Please generate a robust, production-ready manifest.
 """
@@ -58,7 +58,7 @@ def add_no_pull(prompt, no_pull=False):
     return prompt
 
 
-meta_bundle = f"""
+meta_bundle = """
 --- JOB DESCRIPTION ---
 %s
 

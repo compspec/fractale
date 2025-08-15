@@ -33,6 +33,7 @@ class BuildAgent(GeminiAgent):
 
     name = "build"
     description = "builder agent"
+    state_variables = ["result", "dockerfile", "error_message"]
 
     def _add_arguments(self, subparser):
         """
@@ -125,6 +126,7 @@ class BuildAgent(GeminiAgent):
             agent = DebugAgent()
             # This updates the error message to be the output
             context = agent.run(context, requires=prompts.requires)
+            print("\n[bold cyan] Requesting Correction from Build Agent[/bold cyan]")
 
             # If we have reached the max attempts...
             if self.reached_max_attempts():
@@ -139,10 +141,9 @@ class BuildAgent(GeminiAgent):
                 logger.exit(f"Max attempts {self.max_attempts} reached.", title="Agent Failure")
 
             self.attempts += 1
-            print("\n[bold cyan] Requesting Correction from Build Agent[/bold cyan]")
 
             # Update the context with error message
-            return self.run(context)
+            return self._run(context)
 
         # Add generation line
         self.write_file(context, context.result)
@@ -219,6 +220,17 @@ class BuildAgent(GeminiAgent):
         shutil.rmtree(build_dir, ignore_errors=True)
         return (p.returncode, p.stdout + p.stderr)
 
+    def save_dockerfile(self, dockerfile):
+        """
+        Save logs to metadata
+        """
+        if self.save_incremental:
+            if "steps" not in self.metadata:
+                self.metadata["steps"] = []
+            self.metadata["steps"].append(
+                {"item": dockerfile, "type": "dockerfile", "attempt": self.attempts}
+            )
+
     def generate_dockerfile(self, context):
         """
         Generates or refines a Dockerfile using the Gemini API.
@@ -241,6 +253,7 @@ class BuildAgent(GeminiAgent):
                 dockerfile = match.group(1).strip()
             else:
                 dockerfile = content.strip()
+            self.save_dockerfile(dockerfile)
 
             # The result is saved as a build step
             # The dockerfile is the argument used internally

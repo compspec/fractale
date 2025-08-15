@@ -98,6 +98,12 @@ def get_parser():
         default=False,
     )
     agent.add_argument(
+        "--max-attempts",
+        help="Maximum attempts for a manager or individual agent",
+        default=None,
+        type=int,
+    )
+    agent.add_argument(
         "--results",
         help="Save to a custom results directory.",
     )

@@ -125,6 +125,7 @@ class BuildAgent(GeminiAgent):
             agent = DebugAgent()
             # This updates the error message to be the output
             context = agent.run(context, requires=prompts.requires)
+            print("\n[bold cyan] Requesting Correction from Build Agent[/bold cyan]")
 
             # If we have reached the max attempts...
             if self.reached_max_attempts():
@@ -139,10 +140,9 @@ class BuildAgent(GeminiAgent):
                 logger.exit(f"Max attempts {self.max_attempts} reached.", title="Agent Failure")
 
             self.attempts += 1
-            print("\n[bold cyan] Requesting Correction from Build Agent[/bold cyan]")
 
             # Update the context with error message
-            return self.run(context)
+            return self._run(context)
 
         # Add generation line
         self.write_file(context, context.result)

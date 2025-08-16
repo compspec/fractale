@@ -57,6 +57,12 @@ fractale agent --plan ./plans/run-lammps.yaml
 
 # or try using with the cache
 fractale agent --plan ./plans/run-lammps.yaml --use-cache
+
+# Save metadata
+fractale agent --plan ./plans/run-lammps.yaml --results ./results
+
+# Save metadata and include incremental results
+fractale agent --plan ./plans/run-lammps.yaml --results ./results --incremental
 ```
 
 We haven't hit the case yet where the manager needs to take over - that needs further development, along with being goal oriented (e.g., parsing a log and getting an output). 

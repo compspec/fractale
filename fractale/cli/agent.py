@@ -18,8 +18,15 @@ def main(args, extra, **kwargs):
         sys.exit(f"{args.agent_name} is not a recognized agent.")
 
     # Get the agent and run!
-    # Save determines if we want to save state to an output directory
-    agent = agents[args.agent_name](use_cache=args.use_cache)
+    # - results determines if we want to save state to an output directory
+    # - save_incremental will add a metadata section
+    # - max_attempts is for the manager agent (defaults to 10)
+    agent = agents[args.agent_name](
+        use_cache=args.use_cache,
+        results_dir=args.results,
+        save_incremental=args.incremental,
+        max_attempts=args.max_attempts,
+    )
 
     # This is the context - we can remove variables not needed
     context = vars(args)

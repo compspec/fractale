@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 
@@ -8,6 +7,7 @@ import fractale.agent.defaults as defaults
 import fractale.agent.logger as logger
 import fractale.utils as utils
 from fractale.agent.context import get_context
+from fractale.agent.decorators import callback, save_logs
 
 
 class Agent:
@@ -23,27 +23,36 @@ class Agent:
 
     # name and description should be on the class
 
-    def __init__(self, use_cache=False):
+    def __init__(
+        self, use_cache=False, results_dir=None, save_incremental=False, max_attempts=None
+    ):
 
         # Max attempts defaults to unlimited
         # We start counting at 1 for the user to see.
         # Eat your heart out, Matlab.
         self.attempts = 1
-        self.max_attempts = None
+        self.max_attempts = max_attempts
+
+        # For now, assume these are for the manager.
+        # They get added to other agents via the step creation
+        # We can optionally save incremental result objects
+        self.results_dir = results_dir or os.getcwd()
+        self.save_incremental = save_incremental
 
         # The user can save if desired - caching the context to skip steps that already run.
         self.setup_cache(use_cache)
 
+        # This supports saving custom logs and step (attempt) metadata
+        self.metadata = {}
+
         # Custom initialization functions
         self.init()
 
+    @callback(save_logs)
     def run(self, context):
         """
         Run the agent - a wrapper around internal function _run that prepares it.
         """
-        # Init attempts. Each agent has an internal counter for total attempts
-        self.attempts = self.attempts or 1
-
         # Load cached context. This is assumed to override user provided args
         # If we have a saved context, we assume we want to use it, return early
         cached_context = self.load_cache()
@@ -57,6 +66,7 @@ class Agent:
         context = get_context(context)
 
         # Run, wrapping with a load and save of cache
+        # This will return here when the internal loop is done
         context = self._run(context)
         self.save_cache(context)
         return context
@@ -123,10 +133,7 @@ class Agent:
         # Unset (None) or 1.
         if not self.max_attempts:
             return False
-        return self.attempts >= self.max_attempts
-
-    def set_max_attempts(self, max_attempts):
-        self.max_attempts = max_attempts
+        return self.attempts > self.max_attempts
 
     def add_shared_arguments(self, agent):
         """
@@ -204,14 +211,6 @@ class Agent:
         """
         assert context
         raise NotImplementedError(f"The {self.name} agent is missing internal 'run' function")
-
-    def get_initial_prompt(self, context):
-        """
-        Get the initial prompt (with details) to provide context to the manager.
-
-        If we don't do this, the manager can provide a bad instruction for how to fix the error.
-        """
-        return self.get_prompt(context)
 
     def get_prompt(self, context):
         """

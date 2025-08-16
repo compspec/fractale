@@ -78,9 +78,11 @@ class ManagerAgent(GeminiAgent):
 
         Just ploop into pwd for now, we can eventually take a path.
         """
+        if not os.path.exists(self.results_dir):
+            os.makedirs(self.results_dir)
         now = datetime.now()
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
-        results_file = os.path.join(os.getcwd(), f"results-{timestamp}.json")
+        results_file = os.path.join(self.results_dir, f"results-{timestamp}.json")
         utils.write_json(tracker, results_file)
 
     def run(self, context):
@@ -98,7 +100,11 @@ class ManagerAgent(GeminiAgent):
         context.managed = True
 
         # Load plan (required) and pass on setting to use cache to agents
-        plan = Plan(context.get("plan", required=True), use_cache=self.use_cache)
+        plan = Plan(
+            context.get("plan", required=True),
+            use_cache=self.use_cache,
+            save_incremental=self.save_incremental,
+        )
 
         # The manager model works as the orchestrator of work.
         logger.custom(
@@ -117,10 +123,10 @@ class ManagerAgent(GeminiAgent):
 
         # Raise for now so I can see the issue.
         except Exception as e:
-            raise e
             logger.error(
                 f"Orchestration failed:\n{str(e)}", title="Orchestration Failed", expand=False
             )
+            raise e
 
     def run_tasks(self, context, plan):
         """
@@ -129,34 +135,21 @@ class ManagerAgent(GeminiAgent):
         Each step in the plan can have a maximum number of attempts.
         """
         # These are top level attempts. Each agent has its own counter
-        # that is allowed to go up to some limit.
-
-        attempts = {}
-        # Keep track of sequence of agent running times and sequence, and times
+        # that is allowed to go up to some limit. The manager will
+        # attempt the entire thing some number of times. Note that
+        # I haven't tested this yet.
         tracker = []
         timer = Timer()
         current_step_index = 0
 
-        # Keep going until the plan is done, or max attempts reached for a step
+        # Keep going until the plan is done, or max attempts reached for the manager
+        # Each step has its own internal max attempts (just another agent)
         while current_step_index < len(plan):
             # Get the step - we already have validated the agent
             step = plan[current_step_index]
-
-            # Keep track of attempts and check if we've gone over
-            if step.agent not in attempts:
-                attempts[step.agent] = 0
-
-            # Each time build runs, it has its own internal attempts counter.
-            # Important: this counter is external (different) for the entire step
-            # which has some number of internal attempts that reset each time
-            if step.reached_maximum_attempts(attempts[step.agent]):
-                print(f"[red]Agent '{step.agent}' has reached max attempts {step.attempts}.[/red]")
-                break
-            attempts[step.agent] += 1
-
             logger.custom(
                 f"Executing step {current_step_index + 1}/{len(plan)} with agent [bold cyan]{step.agent}[/bold cyan]",
-                title=f"[blue]Orchestrator Attempt {attempts[step.agent]}[/blue]",
+                title=f"[blue]Orchestrator Attempt {self.attempts}[/blue]",
             )
 
             # Execute the agent.
@@ -167,7 +160,16 @@ class ManagerAgent(GeminiAgent):
 
             # Keep track of running the agent and the time it took
             # Also keep result of each build step (we assume there is one)
-            tracker.append([step.agent, timer.elapsed_time, context.get("result")])
+            # We will eventually want to also save the log.
+            tracker.append(
+                {
+                    "agent": step.agent,
+                    "total_seconds": timer.elapsed_time,
+                    "result": context.get("result"),
+                    "attempts": step.attempts,
+                    "metadata": step.logs(),
+                }
+            )
 
             # If we are successful, we go to the next step.
             # Not setting a return code indicates success.
@@ -179,25 +181,19 @@ class ManagerAgent(GeminiAgent):
             # If we reach max attempts and no success, we need to intervene
             else:
                 print("STEP NOT SUCCESSFUL: TODO what to do here?")
+
                 # Try getting recovery step and ask manager to choose next action
                 import IPython
 
                 IPython.embed()
 
-                # This is the intiial (cleaned) prompt to give the manager context
-                instruction = step.get_initial_prompt(context)
+                # Do we try again? If we reached max, break to cut out of loop
+                if self.reached_max_attempts():
+                    break
 
-                # Give the error message to the manager to triage
-                prompt = prompts.get_retry_prompt(instruction, context.result)
-                response = self.ask_gemini(prompt, with_history=False)
-                logger.error(
-                    f"Step failed. Instruction to agent:\n{context.result}",
-                    title=f"Manager Instruction: {step.agent}",
-                    expand=False,
-                )
-                context.reset()
-                context.error_message = response
-                continue
+                # Otherwise, we want to get a recovery step and keep going
+                # TODO try to get recovery step
+                self.attempts += 1
 
                 # TODO: we eventually want to allow the LLM to choose a step
                 # At this point we need to get a recovery step, and include the entire context
@@ -215,6 +211,10 @@ class ManagerAgent(GeminiAgent):
                 else:
                     print("[red]Could not determine recovery step. Aborting workflow.[/red]")
                     break
+
+                # TODO how to implement the above? Probably easier to change plan then call again.
+                context.reset()
+                return self.run_tasks(context, plan)
 
             # If successful, reset the context for the next step.
             # This resets return code and result only.

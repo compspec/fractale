@@ -13,8 +13,9 @@ import yaml
 from rich import print
 from rich.syntax import Syntax
 
-import fractale.agent.kubernetes_job.objects as objects
-import fractale.agent.kubernetes_job.prompts as prompts
+import fractale.agent.kubernetes.objects as objects
+from fractale.agent.kubernetes.base import KubernetesAgent
+import fractale.agent.kubernetes.job.prompts as prompts
 import fractale.agent.logger as logger
 import fractale.utils as utils
 from fractale.agent.base import GeminiAgent
@@ -23,7 +24,7 @@ from fractale.agent.decorators import timed
 from fractale.agent.errors import DebugAgent
 
 
-class KubernetesJobAgent(GeminiAgent):
+class KubernetesJobAgent(KubernetesAgent):
     """
     A Kubernetes Job agent knows how to design a Kubernetes job.
     """
@@ -31,32 +32,6 @@ class KubernetesJobAgent(GeminiAgent):
     name = "kubernetes-job"
     description = "Kubernetes Job agent"
     result_type = "kubernetes-job-manifest"
-
-    def _add_arguments(self, subparser):
-        """
-        Add arguments for the plugin to show up in argparse
-        """
-        agent = subparser.add_parser(
-            self.name,
-            formatter_class=argparse.RawTextHelpFormatter,
-            description=self.description,
-        )
-        agent.add_argument(
-            "container",
-            help="Container unique resource identifier to use (required)",
-        )
-        agent.add_argument(
-            "--environment",
-            help="Environment description to build for (defaults to generic)",
-        )
-        agent.add_argument(
-            "--no-pull",
-            default=False,
-            action="store_true",
-            help="Do not pull the image, assume pull policy is Never",
-        )
-        agent.add_argument("--context-file", help="Context from a deploy failure or similar.")
-        return agent
 
     def get_prompt(self, context):
         """
@@ -134,15 +109,6 @@ class KubernetesJobAgent(GeminiAgent):
         if build_context and os.path.exists(build_context):
             context.dockerfile = utils.read_file(build_context)
         return context
-
-    def print_result(self, job_crd):
-        """
-        Print Job CRD with highlighted Syntax
-        """
-        highlighted_syntax = Syntax(job_crd, "yaml", theme="monokai", line_numbers=True)
-        logger.custom(
-            highlighted_syntax, title="Final Kubernetes Job", border_style="green", expand=True
-        )
 
     def get_diagnostics(self, job, pod):
         """
@@ -368,15 +334,6 @@ class KubernetesJobAgent(GeminiAgent):
 
         # Save full logs for the step
         return 0, full_logs
-
-    def save_log(self, full_logs):
-        """
-        Save logs to metadata
-        """
-        if self.save_incremental:
-            if "logs" not in self.metadata["assets"]:
-                self.metadata["assets"]["logs"] = []
-            self.metadata["assets"]["logs"].append({"item": full_logs, "attempt": self.attempts})
 
     def save_job_manifest(self, job):
         """

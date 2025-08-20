@@ -72,6 +72,8 @@ We haven't hit the case yet where the manager needs to take over - that needs fu
 #### To do items
 
 - Figure out optimization agent (with some goal)
+- The LLM absolutely needs detail about the data, and what to run.
+- Error messages from programs are immensely important now since the LLM makes decisions entirely from it.
 - Right now when we restart, we do with fresh slate (no log memory) - should there be?
 - We likely want some want to quantify the amount of change between prompts, and the difficulty of the task.
 - I think likely when we return to the manager, we want the last response (that might say why it is returning) should inform step selection. But not just step selection, the updated prompt to the step missing something.

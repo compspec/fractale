@@ -272,12 +272,6 @@ class GeminiAgent(Agent):
         """
         Ask gemini adds a wrapper with some error handling.
         """
-        # Always remove lines with empty spaces
-        if len(prompt) > 15000:
-            print("FOUND CHONKER PROMPT")
-            import IPython
-
-            IPython.embed()
         try:
             start = time.perf_counter()
             if with_history:

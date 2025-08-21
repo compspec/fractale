@@ -1,7 +1,5 @@
-import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -11,17 +9,16 @@ import time
 
 import yaml
 from rich import print
-from rich.syntax import Syntax
 
-import fractale.agent.kubernetes.objects as objects
-from fractale.agent.kubernetes.base import KubernetesAgent
 import fractale.agent.kubernetes.job.prompts as prompts
+import fractale.agent.kubernetes.objects as objects
 import fractale.agent.logger as logger
 import fractale.utils as utils
-from fractale.agent.base import GeminiAgent
 from fractale.agent.context import get_context
 from fractale.agent.decorators import timed
 from fractale.agent.errors import DebugAgent
+from fractale.agent.kubernetes.base import KubernetesAgent
+from fractale.agent.optimize import OptimizationAgent
 
 
 class KubernetesJobAgent(KubernetesAgent):
@@ -32,6 +29,13 @@ class KubernetesJobAgent(KubernetesAgent):
     name = "kubernetes-job"
     description = "Kubernetes Job agent"
     result_type = "kubernetes-job-manifest"
+
+    def __init__(self, *args, **kwargs):
+        """
+        Add the optimization agent, even if we don't need it.
+        """
+        super().__init__(*args, **kwargs)
+        self.optimize_agent = OptimizationAgent()
 
     def get_prompt(self, context):
         """
@@ -115,15 +119,19 @@ class KubernetesJobAgent(KubernetesAgent):
         Helper to collect rich error data for a failed job.
         """
         print("[yellow]Gathering diagnostics for failed job...[/yellow]")
-        pod_status = pod.get_filtered_status()
+        pod_events = []
+        pods_description = ""
+        if pod is not None:
+            pod_status = pod.get_filtered_status()
+            pod_events = pod.get_events()
+            pods_description = json.dumps(pod_status)
+
         job_status = job.get_filtered_status()
 
         # Use json.dumps because it's more compact (maybe fewer tokens)
-        pod_events = pod.get_events()
         job_events = job.get_events()
         events = sorted(job_events + pod_events, key=lambda e: e.get("lastTimestamp", ""))
         job_description = json.dumps(job_status)
-        pods_description = json.dumps(pod_status)
         events_description = json.dumps(events)
         full_logs = job.get_logs()
 
@@ -139,7 +147,6 @@ class KubernetesJobAgent(KubernetesAgent):
         Deploy the Kubernetes Job.
         """
         job_crd = context.result
-        cleanup = context.get("cleanup", True)
 
         # Not sure if this can happen, assume it can
         if not job_crd:
@@ -189,6 +196,12 @@ class KubernetesJobAgent(KubernetesAgent):
             job_data["spec"]["template"]["spec"]["containers"][0]["command"] = ["sleep", "infinity"]
             job_crd = yaml.dump(job_data)
 
+        # Create job objects (and eventually pod)
+        # But ensure we delete any that might exist from before.
+        job = objects.KubernetesJob(job_name, namespace)
+        job.delete()
+        pod = None
+
         # Write the manifest to a temporary directory
         job_manifest_path = os.path.join(deploy_dir, "job.yaml")
         utils.write_file(job_crd, job_manifest_path)
@@ -218,10 +231,6 @@ class KubernetesJobAgent(KubernetesAgent):
         # 2. We then need to wait until the job is running or fails
         print("[yellow]Waiting for Job to start... (Timeout: 5 minutes)[/yellow]")
 
-        # Create job objects (and eventually pod)
-        job = objects.KubernetesJob(job_name, namespace)
-        pod = None
-
         # This assumes a backoff / retry of 1, so we aren't doing recreation
         # If it fails once, it fails once and for all.
         # 30 * 5s = 150s (2.5 minutes!)
@@ -245,7 +254,12 @@ class KubernetesJobAgent(KubernetesAgent):
                 )
 
             # 2. If the job isn't terminal, find the pod. It may not exist yet.
-            pod = pod or job.get_pod_name()
+            tries = 0
+            while not pod and tries < 10:
+                print("Waiting for pod...")
+                pod = job.get_pod()
+                time.sleep(5)
+                tries += 1
 
             # 3. If a pod exists, inspect it deeply for fatal errors or readiness.
             if pod:
@@ -320,6 +334,37 @@ class KubernetesJobAgent(KubernetesAgent):
         # But did it succeed?
         if final_status.get("succeeded", 0) > 0:
             print("\n[green]✅ Job final status is Succeeded.[/green]")
+
+            # if we want to optimize, we continue to run until we are instructed not to.
+            if context.get("optimize") is not None:
+
+                # TODO move into own function?
+                # We should provide the cluster resources to the agent
+                resources = self.cluster_resources()
+
+                # The agent calling the optimize agent decides what metadata to present.
+                # This is how this agent will work for cloud vs. bare metal
+                context.requires = prompts.get_optimize_prompt(context, resources)
+                context = self.optimize_agent.run(context, full_logs)
+
+                # Go through spec and update fields that match.
+                decision = context.optimize_result["decision"]
+                print(f"\n[green]✅ Optimization agent decided to {decision}.[/green]")
+                if decision == "RETRY":
+
+                    # Retry will mean recreating job
+                    job.delete()
+                    context.result = self.update_job_crd(context.optimize_result, job_crd)
+                    print(context.result)
+                    return self.deploy(context)
+
+                # Agent has decided to return - no more optimize.
+                # TODO: we need to ensure regex can be passed from context (and input)
+                # Here we add the optimization agent metadata the agent here for saving
+                self.optimize_agent.metadata["foms"] = self.optimize_agent.foms
+                self.metadata["assets"]["optimize"] = self.optimize_agent.metadata
+                return 0, full_logs
+
         else:
             print("\n[red]❌ Job final status is Failed.[/red]")
             diagnostics = self.get_diagnostics(job, pod)
@@ -327,13 +372,24 @@ class KubernetesJobAgent(KubernetesAgent):
             # We already have the logs, so we can pass them directly.
             return 1, prompts.failure_message % diagnostics
 
-        if cleanup and os.path.exists(deploy_dir):
+        if context.get("cleanup") is True and os.path.exists(deploy_dir):
             print(f"[dim]Cleaning up temporary deploy directory: {deploy_dir}[/dim]")
             job.delete()
             shutil.rmtree(deploy_dir, ignore_errors=True)
 
         # Save full logs for the step
         return 0, full_logs
+
+    def update_job_crd(self, updates, job_crd):
+        """
+        Update the job crd with a set of controlled fields.
+        """
+        for key in ["decision", "reason"]:
+            if key in updates:
+                del updates[key]
+        prompt = prompts.update_prompt % (job_crd, json.dumps(updates))
+        result = self.ask_gemini(prompt)
+        return self.get_code_block(result, "yaml")
 
     def save_job_manifest(self, job):
         """

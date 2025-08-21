@@ -59,18 +59,17 @@ class ManagerAgent(GeminiAgent):
                 )
         return step
 
-    def save_results(self, tracker):
+    def save_results(self, tracker, plan):
         """
         Save results to file based on timestamp.
-
-        Just ploop into pwd for now, we can eventually take a path.
         """
         if not os.path.exists(self.results_dir):
             os.makedirs(self.results_dir)
         now = datetime.now()
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
         results_file = os.path.join(self.results_dir, f"results-{timestamp}.json")
-        utils.write_json(tracker, results_file)
+        result = {"steps": tracker, "manager": plan.plan}
+        utils.write_json(result, results_file)
 
     @timed
     def run(self, context):
@@ -113,7 +112,7 @@ class ManagerAgent(GeminiAgent):
                 f"Agentic tasks complete: [bold magenta]{len(tracker)} agent runs[/bold magenta]",
                 title="[green]Manager Status[/green]",
             )
-            self.save_results(tracker)
+            self.save_results(tracker, plan)
 
         # Raise for now so I can see the issue.
         except Exception as e:

@@ -1,3 +1,5 @@
+import json
+
 import fractale.agent.defaults as defaults
 from fractale.agent.prompts import prompt_wrapper
 
@@ -28,6 +30,46 @@ regenerate_prompt = """Your previous attempt to generate the manifest failed. Pl
 
 %s
 """
+
+update_prompt = """You are a Kubernetes Job update agent. Your job is to take a spec of updates for a Job Manifest and apply them.
+You are NOT allowed to make other changes to the manifest. Ignore the 'decision' field and if you think appropriate, add context from "reason" as comments.
+Here are the updates:
+
+%s
+
+And here is the Job manifest to apply them to:
+%s
+Return ONLY the YAML with no other text or commentary.
+"""
+
+
+def get_optimize_prompt(context, resources):
+    """
+    Get a description of cluster resources and optimization goals.
+    """
+    prompt = """
+    Your task is to optimize the running of a Kubernetes Job: %s in %s. You are allowed to request anywhere in the range of available resources, including count and type. Here are the available resources:
+    %s
+    Here is the current job manifest:
+    ```yaml
+    %s
+    ```
+    Please return ONLY a json structure to be loaded that includes a limited set of fields (with keys corresponding to the names that are organized the same as a Kubernetes Job, e.g., spec -> template -spec.
+    The result should be provided as json. The fields should map 1:1 into a pod spec serialzied as json.
+    Do not make requests that lead to Guaranteed pods. DO NOT CHANGE PROBLEM SIZE PARAMETERS OR COMMAND. You can change args. Remember that
+    to get a full node resources you often have to ask for slightly less than what is available.
+    """ % (
+        context.optimize,
+        context.environment,
+        json.dumps(resources),
+        context.result,
+    )
+    dockerfile = context.get("dockerfile")
+    if dockerfile:
+        prompt += (
+            f" Here is the Dockerfile that helped to generate the application.\n {dockerfile}\n"
+        )
+    return prompt
 
 
 def get_regenerate_prompt(context):

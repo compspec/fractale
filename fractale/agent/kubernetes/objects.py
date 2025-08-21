@@ -266,7 +266,7 @@ class KubernetesJob(KubernetesAbstraction):
             ],
         }
 
-    def get_pod_name(self):
+    def get_pod(self):
         """
         Find the name of the pod created by a specific job.
         """

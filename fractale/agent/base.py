@@ -49,7 +49,7 @@ class Agent:
         self.init()
 
     def init_metadata(self):
-        self.metadata = {"times": {}, "assets": {}, "ask_gemini": [], "retries": 0, "failures": []}
+        self.metadata = {"times": {}, "assets": {}, "retries": 0, "failures": []}
 
     @save_result
     def run(self, context):
@@ -294,6 +294,8 @@ class GeminiAgent(Agent):
         """
         Save gemini response metadata and elapsed time
         """
+        if "ask_gemini" not in self.metadata:
+            self.metadata["ask_gemini"] = []
         self.metadata["ask_gemini"].append(
             {
                 "conversation_history": with_history,

@@ -57,6 +57,12 @@ fractale agent --plan ./plans/run-lammps.yaml
 
 # or try using with the cache
 fractale agent --plan ./plans/run-lammps.yaml --use-cache
+
+# Save metadata
+fractale agent --plan ./plans/run-lammps.yaml --results ./results
+
+# Save metadata and include incremental results
+fractale agent --plan ./plans/run-lammps.yaml --results ./results --incremental
 ```
 
 We haven't hit the case yet where the manager needs to take over - that needs further development, along with being goal oriented (e.g., parsing a log and getting an output). 
@@ -66,11 +72,19 @@ We haven't hit the case yet where the manager needs to take over - that needs fu
 #### To do items
 
 - Figure out optimization agent (with some goal)
+- The LLM absolutely needs detail about the data, and what to run.
+- Error messages from programs are immensely important now since the LLM makes decisions entirely from it.
+- Right now when we restart, we do with fresh slate (no log memory) - should there be?
+- We likely want some want to quantify the amount of change between prompts, and the difficulty of the task.
+- I think likely when we return to the manager, we want the last response (that might say why it is returning) should inform step selection. But not just step selection, the updated prompt to the step missing something.
+ - Right now we rely on random sampling of the space to avoid whatever the issue might be.
 
 #### Research Questions
 
 **And experiment ideas**
 
+- Why does it make the same mistakes? E.g., always forgetting ca-certificates. Did it learn from data that was OK to do and thus errors result from inconsistencies between the way things used to work and the way they do now?
+- Insight: if I don't know how to run an app, it's unlikely the LLM can do it, because I can't give any guidance (and it guesses)
 - How do we define stability?
 - What are the increments of change (e.g., "adding a library")? We should be able to keep track of times for each stage and what changed, and an analyzer LLM can look at result and understand (categorize) most salient contributions to change.
   - We also can time the time it takes to do subsequent changes, when relevant. For example, if we are building, we should be able to use cached layers (and the build times speed up) if the LLM is changing content later in the Dockerfile.

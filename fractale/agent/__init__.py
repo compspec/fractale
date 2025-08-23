@@ -1,5 +1,5 @@
 from fractale.agent.build import BuildAgent
-from fractale.agent.kubernetes_job import KubernetesJobAgent
+from fractale.agent.kubernetes import KubernetesJobAgent
 from fractale.agent.manager import ManagerAgent
 
 

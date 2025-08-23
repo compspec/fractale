@@ -1,0 +1,3 @@
+from .job import KubernetesJobAgent
+
+assert KubernetesJobAgent

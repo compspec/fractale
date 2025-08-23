@@ -97,6 +97,28 @@ def get_parser():
         action="store_true",
         default=False,
     )
+    agent.add_argument(
+        "--max-attempts",
+        help="Maximum attempts for a manager or individual agent",
+        default=None,
+        type=int,
+    )
+    agent.add_argument(
+        "--results",
+        help="Save to a custom results directory.",
+    )
+    agent.add_argument(
+        "--incremental",
+        help="Save incremental results for later inspection",
+        action="store_true",
+        default=False,
+    )
+    agent.add_argument(
+        "--allow-interactive",
+        help="Allow the agent to suggest an interactive terminal for you (the user) to debug.",
+        action="store_true",
+        default=False,
+    )
 
     # Add agent parsers
     parsers.register(agents)

@@ -13,6 +13,8 @@ requires = """
 - Do NOT add resource requests or limits. The pod should be able to use the full available resources and be Burstable.
 - Assume that needed software is on the PATH, and don't specify full paths to executables.
 - Set the backoff limit to 1, assuming if it does not work the first time, it will not.
+- Set the restartPolicy to Never so we can inspect the logs of failed jobs
+- Keep in mind that an instance vCPU == 1 logical CPU. Apps typically care about logical CPU.
 - You are only scoped to edit the Job manifest for Kubernetes.
 """
 
@@ -115,4 +117,7 @@ meta_bundle = """
 """
 
 failure_message = """Job failed during execution.
+%s"""
+
+overtime_message = """Job was executing, but went over acceptable time of %s seconds.
 %s"""

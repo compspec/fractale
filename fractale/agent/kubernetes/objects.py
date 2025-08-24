@@ -144,7 +144,7 @@ class KubernetesPod(KubernetesAbstraction):
         Wait for a pod to be ready.
         """
         for j in range(self.max_tries):
-            pod_status = self.get_status()
+            pod_status = self.get_status() or {}
             pod_phase = pod_status.get("phase")
 
             # Let's assume when we are running the pod is ready for logs.
@@ -223,13 +223,19 @@ class KubernetesJob(KubernetesAbstraction):
             time.sleep(10)
         return is_active, is_failed, is_succeeded
 
-    def get_logs(self):
+    def get_logs(self, timeout_seconds=None, wait=True):
         """
         Get the logs of a pod.
         """
         full_logs = ""
         # We use the job selector to get logs, which is more robust if the pod was recreated.
-        log_cmd = ["kubectl", "logs", "-f", f"job/{self.name}", "-n", self.namespace]
+        log_cmd = ["kubectl", "logs", f"job/{self.name}", "-n", self.namespace]
+
+        # If we ware waiting, add -f so it hangs
+        if wait:
+            log_cmd.insert(2, "-f")
+        if timeout_seconds is not None:
+            log_cmd = ['timeout', f'{timeout_seconds}s'] + log_cmd
         with subprocess.Popen(
             log_cmd,
             stdout=subprocess.PIPE,

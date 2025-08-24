@@ -133,7 +133,9 @@ class KubernetesJobAgent(KubernetesAgent):
         events = sorted(job_events + pod_events, key=lambda e: e.get("lastTimestamp", ""))
         job_description = json.dumps(job_status)
         events_description = json.dumps(events)
-        full_logs = job.get_logs()
+
+        # This is assumed to be a one shot
+        full_logs = job.get_logs(wait=False)
 
         # Get job and pod events, add lgs if we have them.
         diagnostics = prompts.meta_bundle % (job_description, pods_description, events_description)
@@ -318,7 +320,7 @@ class KubernetesJobAgent(KubernetesAgent):
 
         # Let's try to stream logs!
         print("[green]🚀 Proceeding to stream logs...[/green]")
-        full_logs = job.get_logs()
+        full_logs = job.get_logs(context.get('max_runtime'))
         pod.wait_for_ready()
 
         # Save logs regardless of success or not (so we see change)
@@ -326,9 +328,20 @@ class KubernetesJobAgent(KubernetesAgent):
 
         # The above command will wait for the job to complete, so this should be OK to do.
         is_active = True
+        wait_seconds = 0
+        max_runtime_seconds = context.get("max_runtime")
         while is_active:
             final_status = job.get_status()
             is_active = final_status.get("active", 0) > 0
+
+            # This is the case where we (the user) set an upper limit
+            if max_runtime_seconds is not None and max_runtime_seconds > wait_seconds:
+                print("\n[red]❌ Job has exceeded acceptable time.[/red]")
+                diagnostics = self.get_diagnostics(job, pod)
+                job.delete()
+                return 1, prompts.overtime_message % (max_runtime_seconds, diagnostics)
+
+            wait_seconds += 5
             time.sleep(5)
 
         # But did it succeed?
@@ -337,33 +350,7 @@ class KubernetesJobAgent(KubernetesAgent):
 
             # if we want to optimize, we continue to run until we are instructed not to.
             if context.get("optimize") is not None:
-
-                # TODO move into own function?
-                # We should provide the cluster resources to the agent
-                resources = self.cluster_resources()
-
-                # The agent calling the optimize agent decides what metadata to present.
-                # This is how this agent will work for cloud vs. bare metal
-                context.requires = prompts.get_optimize_prompt(context, resources)
-                context = self.optimize_agent.run(context, full_logs)
-
-                # Go through spec and update fields that match.
-                decision = context.optimize_result["decision"]
-                print(f"\n[green]✅ Optimization agent decided to {decision}.[/green]")
-                if decision == "RETRY":
-
-                    # Retry will mean recreating job
-                    job.delete()
-                    context.result = self.update_job_crd(context.optimize_result, job_crd)
-                    print(context.result)
-                    return self.deploy(context)
-
-                # Agent has decided to return - no more optimize.
-                # TODO: we need to ensure regex can be passed from context (and input)
-                # Here we add the optimization agent metadata the agent here for saving
-                self.optimize_agent.metadata["foms"] = self.optimize_agent.foms
-                self.metadata["assets"]["optimize"] = self.optimize_agent.metadata
-                return 0, full_logs
+                return self.optimize(context, job, job_crd, full_logs)
 
         else:
             print("\n[red]❌ Job final status is Failed.[/red]")
@@ -378,6 +365,36 @@ class KubernetesJobAgent(KubernetesAgent):
             shutil.rmtree(deploy_dir, ignore_errors=True)
 
         # Save full logs for the step
+        return 0, full_logs
+
+    def optimize(self, context, job, job_crd, full_logs):
+        """
+        Optimize the run.
+        """
+        # We should provide the cluster resources to the agent
+        resources = self.cluster_resources()
+
+        # The agent calling the optimize agent decides what metadata to present.
+        # This is how this agent will work for cloud vs. bare metal
+        context.requires = prompts.get_optimize_prompt(context, resources)
+        context = self.optimize_agent.run(context, full_logs)
+
+        # Go through spec and update fields that match.
+        decision = context.optimize_result["decision"]
+        print(f"\n[green]✅ Optimization agent decided to {decision}.[/green]")
+        if decision == "RETRY":
+
+            # Retry will mean recreating job
+            job.delete()
+            context.result = self.update_job_crd(context.optimize_result, job_crd)
+            print(context.result)
+            return self.deploy(context)
+
+        # Agent has decided to return - no more optimize.
+        # TODO: we need to ensure regex can be passed from context (and input)
+        # Here we add the optimization agent metadata the agent here for saving
+        self.optimize_agent.metadata["foms"] = self.optimize_agent.foms
+        self.metadata["assets"]["optimize"] = self.optimize_agent.metadata
         return 0, full_logs
 
     def update_job_crd(self, updates, job_crd):

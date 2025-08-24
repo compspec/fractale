@@ -65,8 +65,9 @@ class Agent:
             self.print_result(cached_context.get("result"))
             return get_context(cached_context)
 
-        # Otherwise, create new context
+        # Otherwise, create new context - set max attempts
         context = get_context(context)
+        context.max_attempts = self.max_attempts or context.get('max_attempts')
 
         # Run, wrapping with a load and save of cache
         # This will return here when the internal loop is done

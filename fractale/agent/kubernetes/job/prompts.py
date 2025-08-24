@@ -92,13 +92,13 @@ Please generate a robust, production-ready manifest.
 def get_generate_prompt(context):
     environment = context.get("environment", defaults.environment)
     container = context.get("container", required=True)
-    no_pull = context.get("no_pull", True)
+    no_pull = context.get("no_pull")
     prompt = generate_prompt % (environment, container)
     return prompt_wrapper(add_no_pull(prompt, no_pull=no_pull), context=context)
 
 
 def add_no_pull(prompt, no_pull=False):
-    if no_pull:
+    if no_pull is True:
         prompt += "- Please set the imagePullPolicy of the main container to Never.\n"
     return prompt
 

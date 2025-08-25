@@ -13,6 +13,8 @@ requires = """
 - Do NOT add resource requests or limits. The pod should be able to use the full available resources and be Burstable.
 - Assume that needed software is on the PATH, and don't specify full paths to executables.
 - Set the backoff limit to 1, assuming if it does not work the first time, it will not.
+- Set the restartPolicy to Never so we can inspect the logs of failed jobs
+- Keep in mind that an instance vCPU == 1 logical CPU. Apps typically care about logical CPU.
 - You are only scoped to edit the Job manifest for Kubernetes.
 """
 
@@ -92,13 +94,13 @@ Please generate a robust, production-ready manifest.
 def get_generate_prompt(context):
     environment = context.get("environment", defaults.environment)
     container = context.get("container", required=True)
-    no_pull = context.get("no_pull", True)
+    no_pull = context.get("no_pull")
     prompt = generate_prompt % (environment, container)
     return prompt_wrapper(add_no_pull(prompt, no_pull=no_pull), context=context)
 
 
 def add_no_pull(prompt, no_pull=False):
-    if no_pull:
+    if no_pull is True:
         prompt += "- Please set the imagePullPolicy of the main container to Never.\n"
     return prompt
 
@@ -115,4 +117,7 @@ meta_bundle = """
 """
 
 failure_message = """Job failed during execution.
+%s"""
+
+overtime_message = """Job was executing, but went over acceptable time of %s seconds.
 %s"""

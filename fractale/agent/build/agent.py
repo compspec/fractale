@@ -170,6 +170,25 @@ class BuildAgent(GeminiAgent):
         return context
 
     @timed
+    def push(self, context):
+        """
+        If specified, load into kind.
+        """
+        if not context.get('push') is True:
+            return
+
+        logger.info(f"Pushing to {context.container}...")
+        p = subprocess.run(
+            ["docker", "push", context.container],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if p.returncode != 0:
+            output = p.stdout + p.stderr
+            logger.warning(f"Issue with docker push: {output}")
+
+    @timed
     def load(self, context):
         """
         If specified, load into kind.

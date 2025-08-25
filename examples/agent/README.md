@@ -65,14 +65,20 @@ fractale agent --plan ./plans/run-lammps.yaml --results ./results
 fractale agent --plan ./plans/run-lammps.yaml --results ./results --incremental
 ```
 
+Test the minicluster:
+
+```bash
+fractale agent --plan ./plans/minicluster-lammps.yaml
+```
+
 We haven't hit the case yet where the manager needs to take over - that needs further development, along with being goal oriented (e.g., parsing a log and getting an output). 
 
 ## Notes
 
 #### To do items
 
-- Figure out optimization agent (with some goal)
 - The LLM absolutely needs detail about the data, and what to run.
+- We, the user, provide guard-rails guidance to help steer the LLM in the right direction.
 - Error messages from programs are immensely important now since the LLM makes decisions entirely from it.
 - Right now when we restart, we do with fresh slate (no log memory) - should there be?
 - We likely want some want to quantify the amount of change between prompts, and the difficulty of the task.

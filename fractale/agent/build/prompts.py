@@ -6,6 +6,7 @@ import fractale.agent.defaults as defaults
 requires = """
 - Do not change the name of the application image provided.
 - Don't worry about users/permissions - just be root.
+- Don't forget to install certificates.
 - Assume a default of CPU if GPU or CPU is not stated.
 - Do not do a multi-stage build, and do not COPY or ADD anything.
 - Try to place executables on the PATH so they do not need to be discovered.

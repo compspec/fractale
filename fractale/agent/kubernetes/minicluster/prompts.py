@@ -9,26 +9,24 @@ from fractale.agent.prompts import prompt_wrapper
 requires = (
     prompts.common_requires
     + """
-- Do not create or require abstractions beyond the Job (no ConfigMap or Volume or other types)
-- Set the backoff limit to 1, assuming if it does not work the first time, it will not.
-- Set the restartPolicy to Never so we can inspect the logs of failed jobs
-- You are only scoped to edit the Job manifest for Kubernetes.
+- Do not create or require abstractions beyond the MiniCluster (no ConfigMap or Volume or other types)
+- You are only scoped to edit the MiniCluster manifest for Kubernetes.
+- DO NOT CREATE A KUBERNETES JOB. You are creating a Flux MiniCluster deployed by the Flux Operator.
+- You must use version v1alpha2 of the flux-framework.org minicluster.
+- Do not add any sidecars. The list of containers should only have one entry.
+- The command is a string and not an array. You MUST set launcher to false. Do not edit the flux view container image.
 """
 )
 
 common_instructions = prompts.common_instructions + requires
-regenerate_prompt = """Your previous attempt to generate the manifest failed. Please analyze the instruction to fix it and make another try.
 
-%s
-"""
-
-update_prompt = """You are a Kubernetes Job update agent. Your job is to take a spec of updates for a Job Manifest and apply them.
+update_prompt = """You are a Kubernetes Flux Framework MiniCluster agent. Your task is to take a spec of updates for a Flux Framework MiniCluster Manifest (v1alpha2) and apply them.
 You are NOT allowed to make other changes to the manifest. Ignore the 'decision' field and if you think appropriate, add context from "reason" as comments.
 Here are the updates:
 
 %s
 
-And here is the Job manifest to apply them to:
+And here is the manifest to apply them to:
 %s
 Return ONLY the YAML with no other text or commentary.
 """
@@ -39,13 +37,13 @@ def get_optimize_prompt(context, resources):
     Get a description of cluster resources and optimization goals.
     """
     prompt = """
-    Your task is to optimize the running of a Kubernetes abstraction: %s in %s. You are allowed to request anywhere in the range of available resources, including count and type. Here are the available resources:
+    Your task is to optimize the running of a Kubernetes Flux Framework MiniCluster: %s in %s. You are allowed to request anywhere in the range of available resources, including count and type. Here are the available resources:
     %s
     Here is the current manifest:
     ```yaml
     %s
     ```
-    Please return ONLY a json structure to be loaded that includes a limited set of fields (with keys corresponding to the names that are organized the same as a Kubernetes abstraction.
+    Please return ONLY a json structure to be loaded that includes a limited set of fields (with keys corresponding to the names that are organized the same as a Kubernetes MiniCluster.
     The result should be provided as json. The fields should map 1:1 into a pod spec serialzied as json.
     Do not make requests that lead to Guaranteed pods. DO NOT CHANGE PROBLEM SIZE PARAMETERS OR COMMAND. You can change args. Remember that
     to get a full node resources you often have to ask for slightly less than what is available.
@@ -62,17 +60,26 @@ def get_optimize_prompt(context, resources):
         )
     return prompt
 
+def get_explain_prompt(minicluster_explain):
+    """
+    Ensure we return the explained minicluster object.
+    """
+    return f"As a reminder, the MiniCluster Custom Resource Definition allows the following:\n{minicluster_explain}"
 
 def get_regenerate_prompt(context):
     """
     Regenerate is called only if there is an error message.
     """
-    prompt = prompts.regenerate_prompt % (context.error_message)
+    prompt = prompts.regenerate_prompt % context.error_message
     return prompt_wrapper(prompt, context=context)
 
 
 generate_prompt = (
-    """You are a Kubernetes job generator service expert. I need to create a YAML manifest for a Kubernetes Job in an environment for '%s' for the exact container named '%s'.
+    """You are a Kubernetes Flux Framework MiniCluster expert - you know how to write CRDs for the Flux Operator in Kubernetes. I need to create a YAML manifest for a MiniCluster in an environment for '%s' for the exact container named '%s'.
+
+Here is what a MiniCluster looks like:
+
+%s
 
 Please generate a robust, production-ready manifest.
 """
@@ -80,33 +87,15 @@ Please generate a robust, production-ready manifest.
 )
 
 
-def get_generate_prompt(context):
+def get_generate_prompt(context, minicluster_explain):
     environment = context.get("environment", defaults.environment)
     container = context.get("container", required=True)
     no_pull = context.get("no_pull")
-    prompt = generate_prompt % (environment, container)
+    prompt = generate_prompt % (environment, container, minicluster_explain)
     return prompt_wrapper(add_no_pull(prompt, no_pull=no_pull), context=context)
 
 
 def add_no_pull(prompt, no_pull=False):
     if no_pull is True:
-        prompt += "- Please set the imagePullPolicy of the main container to Never.\n"
+        prompt += "- Set the container imagePullPolicy to Never.\n"
     return prompt
-
-
-meta_bundle = """
---- Job Description ---
-%s
-
---- Pod Description ---
-%s
-
---- Events (Recent) ---
-%s
-"""
-
-failure_message = """Job failed during execution.
-%s"""
-
-overtime_message = """Job was executing, but went over acceptable time of %s seconds.
-%s"""

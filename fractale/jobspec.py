@@ -65,7 +65,8 @@ def extract_slot(jobspec):
             for item in resource["with"]:
                 if is_slot:
                     new_slot = copy.deepcopy(item)
-                    total = item["count"] * slot_count
+                    # I'm not actually sure about this - need to ask Dan/Tom
+                    total = item["count"] * slot_count * resource["count"]
                     slots.append(Slot(new_slot, total=total))
 
                 # Again, we can eventually support multiple slots by

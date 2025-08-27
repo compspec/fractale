@@ -113,12 +113,6 @@ def get_parser():
         action="store_true",
         default=False,
     )
-    agent.add_argument(
-        "--allow-interactive",
-        help="Allow the agent to suggest an interactive terminal for you (the user) to debug.",
-        action="store_true",
-        default=False,
-    )
 
     # Add agent parsers
     parsers.register(agents)

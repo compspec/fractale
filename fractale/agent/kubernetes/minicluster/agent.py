@@ -1,4 +1,4 @@
-import os
+import json
 import subprocess
 import tempfile
 
@@ -8,22 +8,22 @@ from rich import print
 import fractale.agent.kubernetes.minicluster.prompts as prompts
 import fractale.agent.kubernetes.objects as objects
 import fractale.agent.logger as logger
-import fractale.utils as utils
 from fractale.agent.context import get_context
 from fractale.agent.decorators import timed
 from fractale.agent.kubernetes.job import KubernetesJobAgent
 
 flux_views = [
-	"ghcr.io/converged-computing/flux-view-rocky:arm-9",
-	"ghcr.io/converged-computing/flux-view-rocky:arn-8",
-	"ghcr.io/converged-computing/flux-view-rocky:tag-9",
-	"ghcr.io/converged-computing/flux-view-rocky:tag-8",
-	"ghcr.io/converged-computing/flux-view-ubuntu:tag-noble",
-	"ghcr.io/converged-computing/flux-view-ubuntu:tag-jammy",
-	"ghcr.io/converged-computing/flux-view-ubuntu:tag-focal",
-	"ghcr.io/converged-computing/flux-view-ubuntu:arm-jammy",
-	"ghcr.io/converged-computing/flux-view-ubuntu:arm-focal",
+    "ghcr.io/converged-computing/flux-view-rocky:arm-9",
+    "ghcr.io/converged-computing/flux-view-rocky:arn-8",
+    "ghcr.io/converged-computing/flux-view-rocky:tag-9",
+    "ghcr.io/converged-computing/flux-view-rocky:tag-8",
+    "ghcr.io/converged-computing/flux-view-ubuntu:tag-noble",
+    "ghcr.io/converged-computing/flux-view-ubuntu:tag-jammy",
+    "ghcr.io/converged-computing/flux-view-ubuntu:tag-focal",
+    "ghcr.io/converged-computing/flux-view-ubuntu:arm-jammy",
+    "ghcr.io/converged-computing/flux-view-ubuntu:arm-focal",
 ]
+
 
 class MiniClusterAgent(KubernetesJobAgent):
     """
@@ -38,14 +38,16 @@ class MiniClusterAgent(KubernetesJobAgent):
         """
         If a view is defined, ensure it is in allowed set.
         """
-        view = minicluster.get('spec', {}).get('flux', {}).get('container')
+        if not minicluster:
+            return minicluster
+        view = minicluster.get("spec", {}).get("flux", {}).get("container", {}).get("image")
         if not view:
             return minicluster
         if view not in flux_views:
             logger.warning(f"Flux view {view} is not valid and will not be used.")
-            del minicluster['spec']['flux']['container']
-            if not minicluster['spec']['flux']:
-                del minicluster['spec']['flux']
+            del minicluster["spec"]["flux"]["container"]
+            if not minicluster["spec"]["flux"]:
+                del minicluster["spec"]["flux"]
         return minicluster
 
     @timed
@@ -108,7 +110,11 @@ class MiniClusterAgent(KubernetesJobAgent):
 
         # We finish by watching the indexed job
         job = objects.KubernetesJob(name, namespace)
-        return self.finish_deploy(context, job, deploy_dir)
+        rc, message = self.finish_deploy(context, job, deploy_dir)
+
+        # Delete the Minicluster - the job agent doesn't have the handle
+        mc.delete()
+        return rc, message
 
     def get_containers(self, job_data):
         return job_data.get("spec", {}).get("containers") or []
@@ -129,6 +135,17 @@ class MiniClusterAgent(KubernetesJobAgent):
             # If we first generate, add the explain
             prompt = prompts.get_generate_prompt(context, self.explain())
         return prompt
+
+    def update_manifest(self, updates, manifest):
+        """
+        Update the crd with a set of controlled fields.
+        """
+        for key in ["decision", "reason"]:
+            if key in updates:
+                del updates[key]
+        prompt = prompts.get_update_prompt(manifest, json.dumps(updates))
+        result = self.ask_gemini(prompt)
+        return self.get_code_block(result, "yaml")
 
     def explain(self):
         """

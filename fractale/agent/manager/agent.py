@@ -43,12 +43,15 @@ class ManagerAgent(GeminiAgent):
             response = self.model.generate_content(prompt)
             try:
                 step = json.loads(self.get_code_block(response.text, "json"))
-                if "agent_name" not in step:
-                    raise ValueError("Response is missing 'agent_name'")
+
+                # I haven't seen these happen yet, but might as well be robust to error
+                if "agent_name" not in step or "task_description" not in step:
+                    prompt += "\n You MUST include an agent_name and task_description in the JSON response."
+                    step = None
                 if step["agent_name"] not in plan.agent_names:
-                    raise ValueError(
-                        f"Response 'agent_name' {step['agent_name']} is not a known agent for this plan."
-                    )
+                    prompt += "\n You MUST select an agent from the list of available agents."
+                    step = None
+
             except Exception as e:
                 step = None
                 prompt = prompts.recovery_error_prompt % (
@@ -68,7 +71,14 @@ class ManagerAgent(GeminiAgent):
         now = datetime.now()
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
         results_file = os.path.join(self.results_dir, f"results-{timestamp}.json")
-        result = {"steps": tracker, "manager": plan.plan}
+        manager = plan.plan
+
+        # The manager will only have times/recovery if needed to ask gemini
+        if self.metadata["times"]:
+            manager["times"] = self.metadata["times"]
+        if self.metadata["assets"]["recovery"]:
+            manager["recovery"] = self.metadata["assets"]["recovery"]
+        result = {"steps": tracker, "manager": manager, "status": self.metadata["status"]}
         utils.write_json(result, results_file)
 
     @timed
@@ -80,6 +90,9 @@ class ManagerAgent(GeminiAgent):
         2. Each agent can define initial inputs.
         3. A context directory is handed between agents. Each agent will be given the complete context.
         """
+        if "recovery" not in self.metadata["assets"]:
+            self.metadata["assets"]["recovery"] = {}
+
         # The context is managed, meaning we return updated contexts
         context["managed"] = True
 
@@ -143,6 +156,17 @@ class ManagerAgent(GeminiAgent):
             if failed_step is not None and step.agent == failed_step.agent:
                 break
         return context
+
+    def assemble_issues(self, agent):
+        """
+        Get a list of previous issues with the step so the LLM maybe won't repeat
+        """
+        if agent not in self.metadata["assets"]["recovery"]:
+            return []
+        issues = []
+        for issue in self.metadata["assets"]["recovery"][agent]:
+            issues.append(issue["task_description"])
+        return issues
 
     def run_tasks(self, context, plan):
         """
@@ -212,6 +236,13 @@ class ManagerAgent(GeminiAgent):
                 # Allow the LLM to choose a step
                 # At this point we need to get a recovery step, and include the entire context
                 recovery_step = self.get_recovery_step(context, step, plan)
+
+                if step.agent not in self.metadata["assets"]["recovery"]:
+                    self.metadata["assets"]["recovery"][step.agent] = []
+
+                # Keep track of recoveries. E.g., the step.agent was directed to recovery step
+                self.metadata["assets"]["recovery"][step.agent].append(recovery_step)
+
                 print(
                     f"Attempting recovery step from agent [bold cyan]{recovery_step['agent_name']}[/bold cyan].",
                 )
@@ -220,9 +251,14 @@ class ManagerAgent(GeminiAgent):
                     for i, step in enumerate(plan.agents)
                     if step.agent == recovery_step["agent_name"]
                 ][0]
+
                 # Reset the context. This removes output and stateful variables UP TO the failed
                 # step so we don't give context that leads to another erroneous state
                 context = self.reset_context(context, plan, step)
+
+                # But assemble all the errors that we have had, we don't want to repeat.
+                issues = self.assemble_issues(step.agent)
+                context.error_message = prompts.get_retry_prompt(context, issues)
                 continue
 
             # If successful, reset the context for the next step.
@@ -230,11 +266,13 @@ class ManagerAgent(GeminiAgent):
             context.reset()
 
         if current_step_index == len(plan):
+            self.metadata["status"] = "Succeeded"
             logger.custom(
                 "🎉 Orchestration Complete: All plan steps succeeded!",
                 title="[bold green]Workflow Success[/bold green]",
             )
         else:
+            self.metadata["status"] = "Failed"
             logger.custom(
                 f"Workflow failed after {self.max_attempts} attempts.",
                 title="[bold red]Workflow Failed[/bold red]",

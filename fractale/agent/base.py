@@ -48,8 +48,23 @@ class Agent:
         # Custom initialization functions
         self.init()
 
+    def reset_return_actions(self, context):
+        """
+        Check if we have requested return to manager or human and update counts.
+        """
+        if context.get("return_to_manager") is not None:
+            self.metadata["counts"]["return_to_manager"] += 1
+        if context.get("return_to_human") is not None:
+            self.metadata["counts"]["return_to_human"] += 1
+            del context["return_to_human"]
+
     def init_metadata(self):
-        self.metadata = {"times": {}, "assets": {}, "retries": 0, "failures": []}
+        self.metadata = {
+            "times": {},
+            "assets": {},
+            "failures": [],
+            "counts": {"retries": 0, "return_to_manager": 0, "return_to_human": 0},
+        }
 
     @save_result
     def run(self, context):
@@ -105,7 +120,7 @@ class Agent:
         # Reset metadata, save retries
         self.init_metadata()
         self.metadata["failures"] = failures
-        self.metadata["retries"] = metadata["retries"]
+        self.metadata["counts"]["retries"] = metadata["counts"]["retries"]
 
         # We don't need a return here, but let's be explicit
         return context

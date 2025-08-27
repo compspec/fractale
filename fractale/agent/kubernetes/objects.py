@@ -166,7 +166,7 @@ class KubernetesPod(KubernetesAbstraction):
                     logger.error(f"Pod has a fatal container status: {reason}", title="Pod Error")
                     return f"{reason}\nMessage: {message}"
 
-    def wait_for_ready(self):
+    def wait_for_ready(self, wait_for_completed=False):
         """
         Wait for a pod to be ready.
         """
@@ -176,7 +176,7 @@ class KubernetesPod(KubernetesAbstraction):
 
             # Let's assume when we are running the pod is ready for logs.
             # If not, we need to check container statuses too.
-            if pod_phase == "Running":
+            if pod_phase == "Running" and not wait_for_completed:
                 print(f"[green]Pod '{self.name}' entered running phase.[/green]")
                 return True
 
@@ -188,13 +188,20 @@ class KubernetesPod(KubernetesAbstraction):
 
             # If we get here, not ready - sleep and try again.
             print(
-                f"[dim]Pod '{self.name}' has status '{pod_phase}'. Waiting... ({j+1}/{self.max_tries})[/dim]"
+                f"[dim]Pod '{self.name}' has status '{pod_phase}'. Waiting... ({j+1}/{self.max_tries})[/dim]",
+                end="\r",
             )
-            time.sleep(25)
+            time.sleep(3)
 
         # If we get here, fail and timeout
         print(f"[red]Pod '{self.name}' never reached running status, state is unknown[/red]")
         return False
+
+    def wait_for_complete(self):
+        """
+        Wait for a pod to be complete
+        """
+        return self.wait_for_ready(wait_for_completed=True)
 
 
 class KubernetesJob(KubernetesAbstraction):
@@ -276,7 +283,12 @@ class KubernetesJob(KubernetesAbstraction):
             # We can add a timeout to the log streaming itself if needed
             # For now, we wait for it to complete naturally.
             full_logs = "".join(log_process.stdout)
-        return full_logs
+
+        # Return if timed out
+        was_timeout = False
+        if log_process.returncode == 124:
+            was_timeout = True
+        return full_logs, was_timeout
 
     def get_filtered_status(self):
         """

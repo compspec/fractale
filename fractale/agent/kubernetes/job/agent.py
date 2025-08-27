@@ -77,6 +77,9 @@ class KubernetesJobAgent(KubernetesAgent):
             # This updates the error message to be the output
             context = DebugAgent().run(context, requires=prompts.requires)
 
+            # Update and reset return to human. We don't touch return to manager (done below)
+            self.reset_return_actions(context)
+
             # Return early based on max attempts
             if self.reached_max_attempts() or context.get("return_to_manager") is True:
                 context.return_to_manager = False
@@ -133,7 +136,7 @@ class KubernetesJobAgent(KubernetesAgent):
         events_description = json.dumps(events)
 
         # This is assumed to be a one shot
-        full_logs = obj.get_logs(wait=False)
+        full_logs, _ = obj.get_logs(wait=False)
 
         # Get job and pod events, add lgs if we have them.
         diagnostics = prompts.meta_bundle % (job_description, pods_description, events_description)
@@ -170,20 +173,6 @@ class KubernetesJobAgent(KubernetesAgent):
         deploy_dir = tempfile.mkdtemp()
         print(f"[dim]Created temporary deploy context: {deploy_dir}[/dim]")
 
-        # The debugger can decide to give the user an interactive session
-        # For interactive, we set the command to sleep infinity
-        if context.get("interactive") is True:
-            logger.info(
-                f"Starting Interative Debugging Session: job manifest in => {deploy_dir}\nType 'exit' when done."
-            )
-            containers = self.get_containers(job_data)
-            command = containers[0]["command"]
-            logger.custom(f"  Initial command: {command}")
-            containers[0]["command"] = ["sleep", "infinity"]
-            job_data = self.set_containers(job_data, containers)
-            context.result = yaml.dump(job_data)
-
-
         # Create job objects (and eventually pod)
         # But ensure we delete any that might exist from before.
         job = objects.KubernetesJob(job_name, namespace)
@@ -197,13 +186,6 @@ class KubernetesJobAgent(KubernetesAgent):
             return (p.returncode, p.stdout + p.stderr)
 
         print("[green]✅ Manifest applied successfully.[/green]")
-
-        # For interactive, we set the command to sleep infinity
-        if context.get("interactive") is True:
-            context.interactive = False
-            import IPython
-
-            IPython.embed()
 
         # 2. We then need to wait until the job is running or fails
         print("[yellow]Waiting for Job to start... (Timeout: 5 minutes)[/yellow]")
@@ -240,7 +222,7 @@ class KubernetesJobAgent(KubernetesAgent):
             # 2. If the job isn't terminal, find the pod. It may not exist yet.
             tries = 0
             while not pod and tries < 10:
-                print("Waiting for pod...")
+                print("Waiting for pod...", end="\r")
                 pod = obj.get_pod()
                 time.sleep(5)
                 tries += 1
@@ -276,19 +258,24 @@ class KubernetesJobAgent(KubernetesAgent):
                         )
 
                     print(
-                        f"[dim]Job is active, Pod '{pod.name}' has status '{pod_phase}'. Waiting... ({i+1}/60)[/dim]"
+                        f"[dim]Job is active, Pod '{pod.name}' has status '{pod_phase}'. Waiting... ({i+1}/60)[/dim]",
+                        end="\r",
                     )
 
                 # This means we saw the pod name, but didn't get pod info / it disappeared - let loop continue
                 else:
                     print(
-                        f"[dim]Job is active, but Pod '{pod.name}' disappeared. Waiting for new pod... ({i+1}/60)[/dim]"
+                        f"[dim]Job is active, but Pod '{pod.name}' disappeared. Waiting for new pod... ({i+1}/60)[/dim]",
+                        end="\r",
                     )
                     pod = None
 
             # No pod yet, keep waiting.
             else:
-                print(f"[dim]Job is active, but no pod found yet. Waiting... ({i+1}/60)[/dim]")
+                print(
+                    f"[dim]Job is active, but no pod found yet. Waiting... ({i+1}/60)[/dim]",
+                    end="\r",
+                )
 
             time.sleep(5)
 
@@ -302,40 +289,31 @@ class KubernetesJobAgent(KubernetesAgent):
 
         # Let's try to stream logs!
         print("[green]🚀 Proceeding to stream logs...[/green]")
-        full_logs = obj.get_logs(context.get("max_runtime"))
+
+        # This function takes the max runtime and will stream until it passes, or the pod exits
         pod.wait_for_ready()
+        full_logs, was_timeout = obj.get_logs(context.get("max_runtime"))
+        context.was_timeout = was_timeout
+        pod.wait_for_complete()
+        final_status = obj.get_status()
 
         # Save logs regardless of success or not (so we see change)
         self.save_log(full_logs)
 
-        # The above command will wait for the job to complete, so this should be OK to do.
-        is_active = True
-        wait_seconds = 0
-        max_runtime_seconds = context.get("max_runtime")
-        while is_active:
-            final_status = obj.get_status()
-            is_active = final_status.get("active", 0) > 0
-
-            # This is the case where we (the user) set an upper limit
-            if max_runtime_seconds is not None and max_runtime_seconds > wait_seconds:
-                print("\n[red]❌ Job has exceeded acceptable time.[/red]")
-                diagnostics = self.get_diagnostics(obj, pod)
-                import IPython 
-                IPython.embed()
-                obj.delete()
-                return 1, prompts.overtime_message % (max_runtime_seconds, diagnostics)
-
-            wait_seconds += 5
-            time.sleep(5)
-
         # But did it succeed?
+        print(final_status)
         if final_status.get("succeeded", 0) > 0:
             print("\n[green]✅ Job final status is Succeeded.[/green]")
 
             # if we want to optimize, we continue to run until we are instructed not to.
+            # This returns to the calling function, so if it errors after optimize it
+            # will self correct.s
             if context.get("optimize") is not None:
                 return self.optimize(context, obj, context.result, full_logs)
 
+        # If we were optimizing and it was too long, return to optimization agent
+        elif context.get("is_optimizing") is True and context.was_timeout:
+            return self.optimize(context, obj, context.result, full_logs)
         else:
             print("\n[red]❌ Job final status is Failed.[/red]")
             diagnostics = self.get_diagnostics(obj, pod)
@@ -355,6 +333,12 @@ class KubernetesJobAgent(KubernetesAgent):
         """
         Optimize the run.
         """
+        # indicator that we started optimizing. We do this so we don't go back to trying to run again
+        context.is_optimizing = True
+
+        # Don't allow returning to manager once we've started.
+        context.return_to_manager = False
+
         # We should provide the cluster resources to the agent
         resources = self.cluster_resources()
 
@@ -403,14 +387,18 @@ class KubernetesJobAgent(KubernetesAgent):
             job_data["spec"]['template"']["spec"]["containers"] = containers
         return job_data, 0, ""
 
-    def update_manifest(self, updates, job_crd):
+    def update_manifest(self, updates, manifest):
         """
-        Update the job crd with a set of controlled fields.
+        Update the crd with a set of controlled fields.
         """
         for key in ["decision", "reason"]:
             if key in updates:
                 del updates[key]
-        prompt = prompts.update_prompt % (job_crd, json.dumps(updates))
+        # This is faster than asking the agent to do it
+        if "manifest" in updates:
+            updates = self.get_code_block(updates["manifest"], "yaml")
+
+        prompt = prompts.get_update_prompt(manifest, json.dumps(updates))
         result = self.ask_gemini(prompt)
         return self.get_code_block(result, "yaml")
 

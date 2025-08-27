@@ -16,6 +16,14 @@ class DebugAgent(GeminiAgent):
     name = "debug"
     description = "error debugging agent"
 
+    def __init__(self, *args, **kwargs):
+        """
+        Add the optimization agent, even if we don't need it.
+        """
+        super().__init__(*args, **kwargs)
+        # Debug agents are usually ephemeral, but if not used like that, keep record
+        self.metadata["assets"]["counts"] = {"return_to_manager": 0, "return_to_human": 0}
+
     def get_prompt(self, context, requires=None):
         """
         Get the prompt for the LLM. We expose this so the manager can take it
@@ -46,15 +54,6 @@ class DebugAgent(GeminiAgent):
         print("Received debugging advice from Gemini...")
         logger.custom(content, title="[green]Debug Advice[/green]", border_style="green")
 
-        # Do we allow interactive and have a request for it?
-        if "INTERACTIVE SESSION" in content and context.get("allow_interactive") is True:
-            logger.custom(
-                "Error debugging agent has recommended interactive session",
-                title="[blue]Debug Advice[/blue]",
-                border_style="blue",
-            )
-            context.interactive = True
-
         # Do we have instructions to return to the manager?
         if "RETURN TO MANAGER" in content:
             logger.custom(
@@ -64,6 +63,17 @@ class DebugAgent(GeminiAgent):
             )
             content = content.replace("RETURN TO MANAGER", "")
             context.return_to_manager = True
+            self.metadata["assets"]["counts"]["return_to_manager"] += 1
+
+        if "RETURN TO HUMAN" in content:
+            logger.custom(
+                "Error debugging agent has requested human feedback. Please add text to 'content' and then type '%store content' and 'exit'",
+                title="[blue]Debug Advice[/blue]",
+                border_style="blue",
+            )
+            context.return_to_human = True
+            self.metadata["assets"]["counts"]["return_to_human"] += 1
+            content += "\n" + input("Please provide additional input as requested:\n")
 
         # The tweaked output as the advice for next step (instead of entire error output)
         context.error_message = content

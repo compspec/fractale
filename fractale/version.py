@@ -15,6 +15,7 @@ LICENSE = "LICENSE"
 # This doesn't need to be the case.
 INSTALL_REQUIRES = (
     ("jsonschema", {"min_version": None}),
+    ("Jinja2", {"min_version": None}),
     ("compspec", {"min_version": None}),
     ("compspec-spack", {"min_version": None}),
     ("compspec-modules", {"min_version": None}),

@@ -55,6 +55,11 @@ class BuildAgent(GeminiAgent):
             help="Environment description to build for (defaults to generic)",
         )
         build.add_argument(
+            "--platforms",
+            help="Custom list of platforms (e.g., linux/amd64,linux/arm64) for a multi-stage build",
+            default=None,
+        )
+        build.add_argument(
             "--load",
             help="Load into kind on success.",
             default=False,
@@ -143,6 +148,9 @@ class BuildAgent(GeminiAgent):
             # This updates the error message to be the output
             context = DebugAgent().run(context, requires=prompts.requires)
             print("\n[bold cyan] Requesting Correction from Build Agent[/bold cyan]")
+
+            # Update and reset return to human. We don't touch return to manager (done below)
+            self.reset_return_actions(context)
 
             # If we have reached the max attempts...
             if self.reached_max_attempts() or context.get("return_to_manager") is True:
@@ -264,9 +272,14 @@ class BuildAgent(GeminiAgent):
                 border_style="blue",
             )
 
+        prefix = ["docker", "build"]
+        if context.get("platforms"):
+            # Note that buildx for multiple platforms must be used with push
+            prefix = ["docker", "buildx", "build", "--platform", context.platforms, "--push"]
+
         # Run the build process using the temporary directory as context
         p = subprocess.run(
-            ["docker", "build", "--network", "host", "-t", context.container, "."],
+            prefix + ["--network", "host", "-t", context.container, "."],
             capture_output=True,
             text=True,
             cwd=build_dir,

@@ -46,15 +46,6 @@ class DebugAgent(GeminiAgent):
         print("Received debugging advice from Gemini...")
         logger.custom(content, title="[green]Debug Advice[/green]", border_style="green")
 
-        # Do we allow interactive and have a request for it?
-        if "INTERACTIVE SESSION" in content and context.get("allow_interactive") is True:
-            logger.custom(
-                "Error debugging agent has recommended interactive session",
-                title="[blue]Debug Advice[/blue]",
-                border_style="blue",
-            )
-            context.interactive = True
-
         # Do we have instructions to return to the manager?
         if "RETURN TO MANAGER" in content:
             logger.custom(

@@ -17,6 +17,7 @@ class ResultParser:
 
     def __init__(self, regular_expression=None):
         self.regular_expression = regular_expression
+        self.regex_attempts = 0
 
     def parse(self, requires, log, regular_expression=None):
         """
@@ -28,6 +29,7 @@ class ResultParser:
         if not self.regular_expression:
             agent = ResultAgent()
             self.regular_expression = agent.run(requires, log)
+            self.regex_attempts = agent.metadata["assets"]["tries"]
 
         return re.findall(self.regular_expression, log)
 
@@ -57,6 +59,19 @@ class ResultAgent(GeminiAgent):
     name = "result"
     description = "result parsing agent"
 
+    def find_match(self, regex, log):
+        """
+        Use several strategies to find a match
+        """
+        try:
+            return re.findall(regex, log)
+        except:
+            regex = self.get_code_block(regex, "re")
+            try:
+                return re.findall(regex, log)
+            except:
+                pass
+
     def run(self, requires, log):
         """
         Run the agent. This is a helper agent, so it just does a simple task.
@@ -75,13 +90,19 @@ class ResultAgent(GeminiAgent):
         # If the prompt has previous error, this can get too long for user to see
         print(textwrap.indent(prompt[0:1000], "> ", predicate=lambda _: True))
 
+        if "tries" not in self.metadata["assets"]:
+            self.metadata["assets"]["tries"] = 0
+
         # Keep trying until we at least get a match
         match = None
         while not match:
             regex = self.ask_gemini(prompt)
             print("Received result parser from Gemini...")
             logger.custom(regex, title="[green]Result Parser[/green]", border_style="green")
-            match = re.findall(regex, log)
+            match = self.find_match(regex, log)
+            self.metadata["assets"]["tries"] += 1
+
+            # Ensure it doesn't make the same mistake...
             if not match:
                 prompt += f"\nHere is a previous unsuccessful attempt: {regex}"
                 continue
@@ -92,6 +113,8 @@ class ResultAgent(GeminiAgent):
                 result = " ".join(match)
             if confirm_correct(log, result):
                 return regex
+            else:
+                prompt += f"\nHere is a previous unsuccessful attempt: {regex}"
 
             # If it's not correct, we need to try again
             match = None

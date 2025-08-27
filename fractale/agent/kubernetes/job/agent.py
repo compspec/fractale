@@ -183,7 +183,6 @@ class KubernetesJobAgent(KubernetesAgent):
             job_data = self.set_containers(job_data, containers)
             context.result = yaml.dump(job_data)
 
-
         # Create job objects (and eventually pod)
         # But ensure we delete any that might exist from before.
         job = objects.KubernetesJob(job_name, namespace)
@@ -320,8 +319,6 @@ class KubernetesJobAgent(KubernetesAgent):
             if max_runtime_seconds is not None and max_runtime_seconds > wait_seconds:
                 print("\n[red]❌ Job has exceeded acceptable time.[/red]")
                 diagnostics = self.get_diagnostics(obj, pod)
-                import IPython 
-                IPython.embed()
                 obj.delete()
                 return 1, prompts.overtime_message % (max_runtime_seconds, diagnostics)
 
@@ -403,14 +400,14 @@ class KubernetesJobAgent(KubernetesAgent):
             job_data["spec"]['template"']["spec"]["containers"] = containers
         return job_data, 0, ""
 
-    def update_manifest(self, updates, job_crd):
+    def update_manifest(self, updates, manifest):
         """
-        Update the job crd with a set of controlled fields.
+        Update the crd with a set of controlled fields.
         """
         for key in ["decision", "reason"]:
             if key in updates:
                 del updates[key]
-        prompt = prompts.update_prompt % (job_crd, json.dumps(updates))
+        prompt = prompts.get_update_prompt(manifest, json.dumps(updates))
         result = self.ask_gemini(prompt)
         return self.get_code_block(result, "yaml")
 

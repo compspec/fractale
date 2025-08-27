@@ -14,16 +14,17 @@ from fractale.agent.decorators import timed
 from fractale.agent.kubernetes.job import KubernetesJobAgent
 
 flux_views = [
-	"ghcr.io/converged-computing/flux-view-rocky:arm-9",
-	"ghcr.io/converged-computing/flux-view-rocky:arn-8",
-	"ghcr.io/converged-computing/flux-view-rocky:tag-9",
-	"ghcr.io/converged-computing/flux-view-rocky:tag-8",
-	"ghcr.io/converged-computing/flux-view-ubuntu:tag-noble",
-	"ghcr.io/converged-computing/flux-view-ubuntu:tag-jammy",
-	"ghcr.io/converged-computing/flux-view-ubuntu:tag-focal",
-	"ghcr.io/converged-computing/flux-view-ubuntu:arm-jammy",
-	"ghcr.io/converged-computing/flux-view-ubuntu:arm-focal",
+    "ghcr.io/converged-computing/flux-view-rocky:arm-9",
+    "ghcr.io/converged-computing/flux-view-rocky:arn-8",
+    "ghcr.io/converged-computing/flux-view-rocky:tag-9",
+    "ghcr.io/converged-computing/flux-view-rocky:tag-8",
+    "ghcr.io/converged-computing/flux-view-ubuntu:tag-noble",
+    "ghcr.io/converged-computing/flux-view-ubuntu:tag-jammy",
+    "ghcr.io/converged-computing/flux-view-ubuntu:tag-focal",
+    "ghcr.io/converged-computing/flux-view-ubuntu:arm-jammy",
+    "ghcr.io/converged-computing/flux-view-ubuntu:arm-focal",
 ]
+
 
 class MiniClusterAgent(KubernetesJobAgent):
     """
@@ -38,14 +39,14 @@ class MiniClusterAgent(KubernetesJobAgent):
         """
         If a view is defined, ensure it is in allowed set.
         """
-        view = minicluster.get('spec', {}).get('flux', {}).get('container')
+        view = minicluster.get("spec", {}).get("flux", {}).get("container")
         if not view:
             return minicluster
         if view not in flux_views:
             logger.warning(f"Flux view {view} is not valid and will not be used.")
-            del minicluster['spec']['flux']['container']
-            if not minicluster['spec']['flux']:
-                del minicluster['spec']['flux']
+            del minicluster["spec"]["flux"]["container"]
+            if not minicluster["spec"]["flux"]:
+                del minicluster["spec"]["flux"]
         return minicluster
 
     @timed

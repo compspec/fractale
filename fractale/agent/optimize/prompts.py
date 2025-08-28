@@ -1,6 +1,3 @@
-import fractale.agent.defaults as defaults
-from fractale.agent.prompts import prompt_wrapper
-
 # TODO should this be allowed to return to a different agent?
 common_instructions = """
 - You can make changes to the application execution only.

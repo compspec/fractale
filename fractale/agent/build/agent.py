@@ -174,7 +174,7 @@ class BuildAgent(GeminiAgent):
         """
         If specified, load into kind.
         """
-        if not context.get('push') is True:
+        if not context.get("push") is True:
             return
 
         logger.info(f"Pushing to {context.container}...")

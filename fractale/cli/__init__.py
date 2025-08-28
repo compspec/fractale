@@ -9,7 +9,7 @@ from compspec.plugin.registry import PluginRegistry
 # This will pretty print all exceptions in rich
 from rich.traceback import install
 
-install(show_locals=True)
+install()
 
 import fractale
 import fractale.agent.parser as parsers

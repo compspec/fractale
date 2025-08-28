@@ -1,10 +1,14 @@
 import json
+import os
+import shutil
 import subprocess
+import tempfile
 import time
 
 from rich import print
 
 import fractale.agent.logger as logger
+import fractale.utils as utils
 
 # All the ways a container can go wrong... (upside down smiley face)
 container_issues = [
@@ -22,12 +26,35 @@ class KubernetesAbstraction:
         self.namespace = namespace
         self.max_tries = max_tries
 
+    @property
+    def kind(self):
+        return self.obj.capitalize()
+
+    def apply(self, manifest):
+        """
+        Apply a crd, writing some content to file first.
+        """
+        # Keep this controllable for us to clean up for now
+        deploy_dir = tempfile.mkdtemp()
+        print(f"[dim]Created temporary deploy context: {deploy_dir}[/dim]")
+
+        # Create handle to object
+        # But ensure we delete any that might exist from before.
+        self.delete()
+
+        # Write the manifest to a temporary directory
+        manifest_path = os.path.join(deploy_dir, f"{self.obj}.yaml")
+        utils.write_file(manifest, manifest_path)
+        cmd = ["kubectl", "apply", "-f", manifest_path]
+        p = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=deploy_dir)
+        shutil.rmtree(deploy_dir)
+        return p
+
     def get_events(self):
         """
         If we get ALL events it can be over 200K tokens. Let's get a smaller set.
         """
-        obj = self.obj.capitalize()
-        selector = f"involvedObject.kind={obj},involvedObject.name={self.name}"
+        selector = f"involvedObject.kind={self.kind},involvedObject.name={self.name}"
         events_cmd = [
             "kubectl",
             "get",
@@ -60,7 +87,7 @@ class KubernetesAbstraction:
         """
         info = self.get_info()
         if not info:
-            return
+            return {}
         return info.get("status", {})
 
     def get_info(self):
@@ -185,6 +212,8 @@ class KubernetesJob(KubernetesAbstraction):
         is_active, is_failed, is_succeeded = False, False, False
 
         # Poll for 10 minutes. This assumes a large container that needs to pull
+        # This is purposfully set to use "job" for the minicluster too so we
+        # get status of the underlying indexed job
         for i in range(60):  # 60 * 10s = 600s = 10 minutes
             get_status_cmd = [
                 "kubectl",
@@ -235,7 +264,7 @@ class KubernetesJob(KubernetesAbstraction):
         if wait:
             log_cmd.insert(2, "-f")
         if timeout_seconds is not None:
-            log_cmd = ['timeout', f'{timeout_seconds}s'] + log_cmd
+            log_cmd = ["timeout", f"{timeout_seconds}s"] + log_cmd
         with subprocess.Popen(
             log_cmd,
             stdout=subprocess.PIPE,
@@ -293,3 +322,11 @@ class KubernetesJob(KubernetesAbstraction):
         # Only return output
         if output:
             return KubernetesPod(output, self.namespace)
+
+
+class MiniCluster(KubernetesJob):
+    """
+    A wrapper around a MiniCluster.
+    """
+
+    obj = "minicluster"

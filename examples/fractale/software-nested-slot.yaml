@@ -11,7 +11,7 @@ resources:
   label: task
 tasks:
 - command:
-  - gmx
+  - curl
   slot: task
   count:
     per_slot: 1

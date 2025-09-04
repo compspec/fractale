@@ -167,7 +167,7 @@ class Step:
         """
         A function to mark that the entire plan was retried.
         """
-        self._agent.metadata["retries"] += 1
+        self._agent.metadata["counts"]["retries"] += 1
 
     @property
     def agent(self):

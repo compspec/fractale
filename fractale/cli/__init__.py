@@ -9,7 +9,7 @@ from compspec.plugin.registry import PluginRegistry
 # This will pretty print all exceptions in rich
 from rich.traceback import install
 
-install(show_locals=True)
+install()
 
 import fractale
 import fractale.agent.parser as parsers
@@ -110,12 +110,6 @@ def get_parser():
     agent.add_argument(
         "--incremental",
         help="Save incremental results for later inspection",
-        action="store_true",
-        default=False,
-    )
-    agent.add_argument(
-        "--allow-interactive",
-        help="Allow the agent to suggest an interactive terminal for you (the user) to debug.",
         action="store_true",
         default=False,
     )

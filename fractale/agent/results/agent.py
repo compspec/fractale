@@ -17,6 +17,7 @@ class ResultParser:
 
     def __init__(self, regular_expression=None):
         self.regular_expression = regular_expression
+        self.regex_attempts = 0
 
     def parse(self, requires, log, regular_expression=None):
         """
@@ -28,6 +29,7 @@ class ResultParser:
         if not self.regular_expression:
             agent = ResultAgent()
             self.regular_expression = agent.run(requires, log)
+            self.regex_attempts = agent.metadata["assets"]["tries"]
 
         return re.findall(self.regular_expression, log)
 
@@ -40,11 +42,13 @@ def confirm_correct(log, result):
     RESET = "\033[0m"
     prompt = f"{log}\nResult: {GREEN}{result}{RESET}\n\nPlease confirm the parsing agent result above is correct."
     while True:
-        response = input(prompt + " (yes/no): ").lower().strip()
+        response = input(prompt + " (yes/no/feedback): ").lower().strip()
         if response in ["yes", "y"]:
             return True
         elif response in ["no", "n"]:
             return False
+        elif response == "feedback":
+            return None
         else:
             print("Invalid input. Please enter 'yes' or 'no'.")
 
@@ -56,6 +60,19 @@ class ResultAgent(GeminiAgent):
 
     name = "result"
     description = "result parsing agent"
+
+    def find_match(self, regex, log):
+        """
+        Use several strategies to find a match
+        """
+        try:
+            return re.findall(regex, log)
+        except:
+            regex = self.get_code_block(regex, "re")
+            try:
+                return re.findall(regex, log)
+            except:
+                pass
 
     def run(self, requires, log):
         """
@@ -75,13 +92,24 @@ class ResultAgent(GeminiAgent):
         # If the prompt has previous error, this can get too long for user to see
         print(textwrap.indent(prompt[0:1000], "> ", predicate=lambda _: True))
 
+        if "tries" not in self.metadata["assets"]:
+            self.metadata["assets"]["tries"] = 0
+
+        # If too many retries, don't save history
+        retries = 0
+        with_history = True
+        attempts = []
+
         # Keep trying until we at least get a match
         match = None
         while not match:
-            regex = self.ask_gemini(prompt)
+            regex = self.ask_gemini(prompt, with_history=with_history)
             print("Received result parser from Gemini...")
             logger.custom(regex, title="[green]Result Parser[/green]", border_style="green")
-            match = re.findall(regex, log)
+            match = self.find_match(regex, log)
+            self.metadata["assets"]["tries"] += 1
+
+            # Ensure it doesn't make the same mistake...
             if not match:
                 prompt += f"\nHere is a previous unsuccessful attempt: {regex}"
                 continue
@@ -90,8 +118,22 @@ class ResultAgent(GeminiAgent):
             result = match[0]
             if len(match) > 1:
                 result = " ".join(match)
-            if confirm_correct(log, result):
+            is_correct = confirm_correct(log, result)
+            if is_correct is True:
                 return regex
+
+            # Feedback case
+            elif is_correct is None:
+                prompt += "\n" + input("Please enter feedback for the LLM:\n")
+            else:
+                prompt += f"\nHere is a previous unsuccessful attempt: {regex}"
+                attempts.append(regex)
+
+            # Usually this indicates a problem.
+            retries += 1
+            if retries > 5:
+                prompt = prompts.parsing_prompt % (requires, log)
+                with_history = False
 
             # If it's not correct, we need to try again
             match = None

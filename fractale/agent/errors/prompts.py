@@ -1,14 +1,22 @@
 import fractale.agent.defaults as defaults
+from fractale.agent.prompts import Prompt
 
-debug_prompt = f"""You are a debugging agent and expert. We attempted the following piece of code and had problems.
-Please identify the error and advise for how to fix the error. The agent you are returning to can only make scoped
-changes, which we provide below. If you determine the issue cannot be resolved by changing one of these files,
-we will need to return to another agent. In this case, please provide "RETURN TO MANAGER" anywhere in your response.
+persona = "You are a debugging agent and expert."
+context = "We attempted the following piece of code and had problems."
+debug_task = """Please identify the error and advise for how to fix it. The agent you are returning to can only make scoped changes, which we provide below. {% if return_to_manager %}If you determine the issue cannot be resolved by changing one of these files, we will need to return to another agent. In this case, please provide "RETURN TO MANAGER" anywhere in your response.{% endif %}
+If you would like a human to add comment to how to address the issue, put "RETURN TO HUMAN" anywhere in your response and include any questions you have about the issue. You can ONLY choose one source of help.
+{% if requires %}{% for item in requires %}  - {{item}}\n{% endfor %}{% endif %}
+Here is additional context to guide your instruction. YOU CANNOT CHANGE THESE VARIABLES OR FILES OR SUGGEST TO DO SO.
+  {{ context }}
+Here is the code:\n{{code_block}}\nAnd here is the error output:\n{{error_message}}
 """
 
-interactive_prompt = """  If there is information the step cannot know such as runtime parameters or data paths"
-and the fix is not obvious (and you are guessing) please provide "INTERACTIVE SESSION" anywhere in your response
-"""
+debug_prompt = {
+    "persona": persona,
+    "context": context,
+    "task": debug_task,
+    "instructions": [],
+}
 
 
 def get_debug_prompt(context, requires):
@@ -18,24 +26,22 @@ def get_debug_prompt(context, requires):
     """
     error_message = context.get("error_message", required=True)
     code_block = context.get("result", required=True)
-    prompt = debug_prompt
 
-    if context.get("allow_interactive") is True:
-        prompt += interactive_prompt
-
-    # Requirements are specific constraints to give to the error agent
-    if requires:
-        prompt += requires + "\n"
-
-    # Add additional context (details from user are provided here)
-    prompt += "Here is additional context to guide your instruction. YOU CANNOT CHANGE THESE VARIABLES OR FILES OR SUGGEST TO DO SO.\n"
+    # Prepare additional context
+    additional_context = ""
     for key, value in context.items():
         if key in defaults.shared_args:
             continue
         if key == "details":
             key = "details from user"
-        prompt += f"{key} is defined as: {value}\n"
-
-    prompt += f"Here is the code:\n{code_block}\nAnd here is the error output:\n{error_message}"
-    # Remove double newlines
-    return prompt.strip("\n\n")
+        additional_context += f"{key} is defined as: {value}\n"
+    return Prompt(debug_prompt, context).render(
+        {
+            "error_message": error_message,
+            # Return to manager MUST be False
+            "return_to_manager": context.get("return_to_manager") is not False,
+            "requires": requires,
+            "context": additional_context,
+            "code_block": code_block,
+        }
+    )

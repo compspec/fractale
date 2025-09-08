@@ -23,6 +23,8 @@ def save_result(func):
         self.metadata["result"] = {
             "item": final_result,
             "total_seconds": elapsed_time,
+            "start_time": start,
+            "end_time": end,
             "type": self.result_type,
         }
         return context

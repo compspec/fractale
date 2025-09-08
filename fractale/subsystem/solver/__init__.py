@@ -1,8 +1,12 @@
 import os
 
 from .database import DatabaseSolver
-from .graph import GraphSolver
 
+# Don't require graph_tool
+try:
+    from .graph import GraphSolver
+except ImportError:
+    GraphSolver = None
 
 def load_solver(backend, path):
     """
@@ -10,7 +14,7 @@ def load_solver(backend, path):
     """
     if backend == "database":
         return DatabaseSolver(path)
-    if backend == "graph":
+    if backend == "graph" and GraphSolver is not None:
         return GraphSolver(path)
 
     raise ValueError(f"Unsupported backend {backend}")

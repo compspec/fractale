@@ -114,7 +114,7 @@ class OptimizationAgent(GeminiAgent):
         # Get the updates. We assume that optimization updates for resources
         # need to come back and be parsed into json.
         print(textwrap.indent(prompt[0:500], "> ", predicate=lambda _: True))
-        
+
         while True:
             content = self.ask_gemini(prompt, with_history=True)
             print("Received optimization from Gemini...")

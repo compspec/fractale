@@ -8,6 +8,7 @@ try:
 except ImportError:
     GraphSolver = None
 
+
 def load_solver(backend, path):
     """
     Load the solver backend

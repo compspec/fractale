@@ -4,13 +4,16 @@ from fractale.agent.prompts import Prompt
 persona = "You are a Flux Framework batch job generator"
 context = "We are trying to generate or translate Flux job batch job bash scripts ."
 common_instructions = [
-    "You MUST define #FLUX directives at the top with resources."
+    "You MUST define #FLUX directives at the top with resources.",
     "Your script or batch script MUST come after the directive block.",
 ]
 
 generate_task = """Your job is to receive a request for a job batch script and generate the output bash script. Here is the request:
 
 {{instructions}}
+
+{% if error_message %}Your previous attempt failed. Here is instruction from the debug agent.
+{{ error_message }}{% endif %}
 """
 
 
@@ -23,5 +26,8 @@ generate_prompt = {
 
 
 # These are currently required, but don't necessarily have to be...
-def getcd_generate_prompt(context):
-    return Prompt(generate_prompt, context).render({"instructions": context.instruction})
+def get_generate_prompt(context):
+    error_message = context.get("error_message")
+    return Prompt(generate_prompt, context).render(
+        {"instructions": context.instruction, "error_message": error_message}
+    )

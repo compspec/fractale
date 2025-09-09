@@ -3,14 +3,15 @@
 import argparse
 import sys
 
-# This will pretty print all exceptions in rich
-from fractale.transformer.flux.validate import Validator
+from rich import box
+from rich.console import Console
+from rich.padding import Padding
+from rich.panel import Panel
+
 import fractale.utils as utils
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.padding import Padding
-from rich import box
+# This will pretty print all exceptions in rich
+from fractale.transformer.flux.validate import Validator
 
 
 def display_error(content, issue):
@@ -18,16 +19,14 @@ def display_error(content, issue):
     Displays a custom error message inside a red box.
     """
     console = Console(stderr=True)
-    content = f"[bold]Here is the script:[/bold]\n" + content + "\n\n[red]" + issue + "[/red]"
-    error_panel = Panel(
-        Padding(f"{content}", (1, 2)),
-        title="[bold white]Flux Batch Script Validation Failed[/bold white]",
-        title_align="left",
-        border_style="red",
-        expand=False,
+    content = (
+        f"[bold]Flux Batch Validation Failed:[/bold]\n[yellow]"
+        + content
+        + "[/yellow]\n\n[red]"
+        + issue
+        + "[/red]"
     )
-    console.print(error_panel)
-
+    console.print(content)
 
 
 def get_parser():
@@ -74,10 +73,11 @@ def validate(path):
     content = utils.read_file(path)
     try:
         # Setting fail fast to False means we will get ALL errors at once
-        validator.parse(path, fail_fast=False)
+        validator.validate(path, fail_fast=False)
     except Exception as e:
         display_error(content, str(e))
         sys.exit(1)
+
 
 if __name__ == "__main__":
     run_validate()

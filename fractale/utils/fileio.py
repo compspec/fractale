@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import stat
 import subprocess
 import tempfile
 from contextlib import contextmanager
@@ -37,6 +38,19 @@ def read_file(filename):
     with open(filename, "r") as fd:
         content = fd.read()
     return content
+
+
+def make_executable(path):
+    """
+    Adds execute permission to a file.
+    """
+    current_mode = os.stat(path).st_mode
+
+    # Add execute permission for owner, group, and others
+    new_mode = current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+
+    # Set the new permissions
+    os.chmod(path, new_mode)
 
 
 def recursive_find(base, pattern="[.]py"):

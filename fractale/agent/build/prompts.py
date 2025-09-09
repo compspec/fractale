@@ -13,7 +13,7 @@ You are the agent responsible for the build step in that pipeline.
 requires = [
     "You MUST NOT change the name of the application container image provided.",
     "Don't worry about users/permissions - just be root.",
-    "DO NOT forget to install certificates.",
+    "DO NOT forget to install certificates and you MUST NOT apt-get purge.",
     "Assume a default of CPU if GPU or CPU is not stated.",
     "Do NOT do a multi-stage build, and do NOT COPY or ADD anything.",
     "You MUST COPY executables to a system location to be on the PATH. Do NOT symlink",

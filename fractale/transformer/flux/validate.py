@@ -60,18 +60,14 @@ class Validator(BatchCmd):
                 changes.append({"line": deleted_line, "reason": reason})
                 del lines[line - 1]
                 return self.get_directive_parser("\n".join(lines), changes)
-            else:
-                print("The error message did not return a line, take a look why.")
-                import IPython
 
-                IPython.embed()
         string_io.close()
         return batchscript, changes
 
     def unhandled(self, filename):
         return self.parse(filename, return_unhandled=True)
 
-    def parse(self, filename, return_unhandled=False):
+    def parse(self, filename, return_unhandled=False, fail_fast=True):
         """
         Validate and parse, yielding back arguments.
         """
@@ -82,7 +78,7 @@ class Validator(BatchCmd):
         batchscript, changes = self.get_directive_parser(content)
         if changes:
             changes = "\n".join(changes)
-            raise ValueError(f"Jobspec is invalid, required changes: {changes}")
+            raise ValueError(f"Batch Job is invalid, required changes: {changes}")
 
         # Assume the script is not hashbang, command or directive
         script = [x for x in batchscript.script.split("\n") if not x.startswith("#") and x.strip()]
@@ -94,17 +90,27 @@ class Validator(BatchCmd):
         #   1. input_file (Not sure what this is)
         #   2. I don't think flux has memory per slot
         #   3. I know flux has constraints, add parsed here
+        errors = []
         for item in batchscript.directives:
             try:
                 # Validation, then mapping to standard
                 if item.action == "SETARGS":
                     # This should only be one value, but don't assume
                     for key, value in self.parse_argument_delta(item.args):
-                        js = self.update_jobspec(js, key, value, not_handled)
+                        js, _ = self.update_jobspec(js, key, value, not_handled)
 
             except Exception:
                 name = " ".join(item.args)
-                raise ValueError(f"validation failed at {name} line {item.lineno}")
+                if fail_fast:
+                    raise ValueError(f"validation failed at directive '{name}' line {item.lineno}")
+                else:
+                    errors.append(f"  #FLUX: {name}")
+
+        # Return ALL errors at once
+        if not fail_fast and errors:
+            errors = "\n".join(errors)
+            raise ValueError(f"Validation failed at directives:\n{errors}")
+
         if return_unhandled:
             return not_handled
         return js
@@ -167,6 +173,45 @@ class Validator(BatchCmd):
             print(f"Warning: not handled: {key}={value}")
             unhandled.add(key)
         return js, unhandled
+
+    def validate(self, filename, fail_fast=True):
+        """
+        Validate a batch script.
+        """
+        content = utils.read_file(filename)
+
+        # Changes are removed lines to get it to read
+        batchscript, changes = self.get_directive_parser(content)
+        if changes:
+            changes = "\n".join(changes)
+            raise ValueError(f"Jobspec is invalid, required changes: {changes}")
+
+        # Total number of args so we can calculate how many we got wrong
+        errors = []
+        if any([re.search("^#FLUX ", x) for x in content.split("\n")]):
+            if fail_fast:
+                raise ValueError("#FLUX directives need to be FLUX:")
+            else:
+                errors.append("#FLUX directives need to be FLUX:")
+
+        # SETARGS(['--tasks=5'])
+        # SETARGS(['-N', '1'])
+        for item in batchscript.directives:
+            try:
+                if item.action == "SETARGS":
+                    self.parser.parse_args(item.args)
+
+            # argparse always SystemExits
+            except (Exception, SystemExit) as e:
+                name = " ".join(item.args)
+                if fail_fast:
+                    raise ValueError(f"Invalid batch job directive {name}: {e}")
+                else:
+                    errors.append(f"{name}: {e}")
+
+        if not fail_fast and errors:
+            errors = "\n".join(errors)
+            raise ValueError(f"Validation failed at directives:\n{errors}")
 
     def parse_argument_delta(self, args):
         """

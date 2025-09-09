@@ -1,5 +1,6 @@
 from fractale.agent.build import BuildAgent
 from fractale.agent.kubernetes import KubernetesJobAgent, MiniClusterAgent
+from fractale.agent.flux import FluxJobSpecAgent
 from fractale.agent.manager import ManagerAgent
 
 
@@ -10,4 +11,5 @@ def get_agents():
         "kubernetes-job": KubernetesJobAgent,
         "manager": ManagerAgent,
         "minicluster": MiniClusterAgent,
+        "flux-jobspec": FluxJobSpecAgent,
     }

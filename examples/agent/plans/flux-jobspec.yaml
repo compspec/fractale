@@ -1,0 +1,7 @@
+name: Build and Deploy LAMMPS
+description: Build a Docker container and deploy it as a Kubernetes MiniCluster.
+plan:
+
+- agent: flux-jobspec
+  context:
+    instruction: Run the reaxff problem with lammps (lmp) on 2 nodes, 8 cores.

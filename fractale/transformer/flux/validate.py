@@ -71,19 +71,23 @@ class Validator(BatchCmd):
     def unhandled(self, filename):
         return self.parse(filename, return_unhandled=True)
 
-    def parse(self, filename, return_unhandled=False):
+    def parse(self, filename, return_unhandled=False, fail_fast=True):
         """
         Validate and parse, yielding back arguments.
         """
         content = utils.read_file(filename)
         not_handled = set()
 
+        # Consider a malformed flux line (e.g., FLUX:) invalid
+        if "#FLUX " in content:
+            raise ValueError("Jobspec is invalid: #FLUX should be #FLUX:")
+
         # Changes are removed lines to get it to read
         batchscript, changes = self.get_directive_parser(content)
         if changes:
             changes = "\n".join(changes)
             raise ValueError(f"Jobspec is invalid, required changes: {changes}")
-
+        
         # Assume the script is not hashbang, command or directive
         script = [x for x in batchscript.script.split("\n") if not x.startswith("#") and x.strip()]
 
@@ -94,6 +98,7 @@ class Validator(BatchCmd):
         #   1. input_file (Not sure what this is)
         #   2. I don't think flux has memory per slot
         #   3. I know flux has constraints, add parsed here
+        errors = []
         for item in batchscript.directives:
             try:
                 # Validation, then mapping to standard
@@ -104,7 +109,16 @@ class Validator(BatchCmd):
 
             except Exception:
                 name = " ".join(item.args)
-                raise ValueError(f"validation failed at {name} line {item.lineno}")
+                if fail_fast:
+                    raise ValueError(f"validation failed at directive '{name}' line {item.lineno}")
+                else:
+                    errors.append(f"  #FLUX: {name}")
+
+        # Return ALL errors at once
+        if not fail_fast and errors:
+            errors = "\n".join(errors)
+            raise ValueError(f"Validation failed at directives:\n {errors}")
+
         if return_unhandled:
             return not_handled
         return js

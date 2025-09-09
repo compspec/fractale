@@ -1,1 +1,1 @@
-from fractale.agent.flux.jobspec import FluxJobSpecAgent
+from fractale.agent.flux.batch import FluxBatchAgent

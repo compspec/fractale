@@ -1,8 +1,9 @@
 #!/bin/bash
 
 #FLUX: -N2
-#FLUX: -n8
+#FLUX -n8
 #FLUX: --out=lammps.out
 #FLUX: --err=lammps.err
+#FLUX: --noodles=2
 
 hostname

@@ -196,6 +196,7 @@ class KubernetesJobAgent(KubernetesAgent):
         Watch for pod / job object and finish deployment.
         """
         pod = None
+        context.was_oom = False
 
         # This assumes a backoff / retry of 1, so we aren't doing recreation
         # If it fails once, it fails once and for all.
@@ -250,6 +251,11 @@ class KubernetesJobAgent(KubernetesAgent):
                     # This is important because a pod can be active, but then go into a crashed state
                     # We provide the status that coincides with our info query to be consistent
                     if reason := pod.has_failed_container(pod_status):
+
+                        # If the pod was OOMKIlled, this shouldn't cycle around as failure during optimization
+                        if reason == "OOMKilled" and context.get("is_optimizing"):
+                            return self.optimize(context, obj, context.result, "The last attempt was OOMKilled.")
+
                         diagnostics = self.get_diagnostics(obj, pod)
                         obj.delete()
                         return (
@@ -302,6 +308,7 @@ class KubernetesJobAgent(KubernetesAgent):
 
         # But did it succeed?
         print(final_status)
+
         if final_status.get("succeeded", 0) > 0:
             print("\n[green]✅ Job final status is Succeeded.[/green]")
 

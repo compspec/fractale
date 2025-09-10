@@ -95,8 +95,9 @@ class ResultAgent(GeminiAgent):
         if "tries" not in self.metadata["assets"]:
             self.metadata["assets"]["tries"] = 0
 
-        # If too many retries, don't save history
+        # If too many retries, ask for human input - we've hit some rare edge case.
         retries = 0
+        advice = 0
         with_history = True
         attempts = []
 
@@ -129,11 +130,19 @@ class ResultAgent(GeminiAgent):
                 prompt += f"\nHere is a previous unsuccessful attempt: {regex}"
                 attempts.append(regex)
 
+            # If more than 5 retries, ask for human help
+            # Unlike retries, this counter resets
+            if advice >= 3:
+                prompt += "\n" + input("The agent is having trouble. Please provide advice:\n")
+                advice += 1
+
             # Usually this indicates a problem.
-            retries += 1
-            if retries > 5:
+            if retries >= 5:
                 prompt = prompts.parsing_prompt % (requires, log)
                 with_history = False
+
+            retries += 1
+            advice += 1
 
             # If it's not correct, we need to try again
             match = None

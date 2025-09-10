@@ -1,0 +1,205 @@
+name: Build and Deploy AMG2023
+description: Build a Docker container and deploy it as a Kubernetes Job.
+plan:
+- agent: build
+  context:
+    environment: "AWS CPU instance in Kubernetes"
+    application: amg2023
+    container: ghcr.io/converged-computing/fractale-agent-experiments:amg2023
+    push: true
+    platforms: linux/amd64,linux/arm64
+    max_attempts: 10
+    details: |
+      Clone the latest branch of amg2023. You MUST put amg on the PATH.
+      You MUST install libgomp1 for libgomp1.so
+
+- agent: minicluster
+  context:
+    environment: "AWS CPU instance in Kubernetes" 
+    container: ghcr.io/converged-computing/fractale-agent-experiments:amg2023
+    max_attempts: 10
+    max_runtime: 600
+    allow_return_to_human: false
+    allow_return_to_manager: false
+    optimize: |
+      Maximize the amg2023 figure of merit. You MUST maximize memory per CPU core. More cores are better.
+      The trick to optimizing this is THREADING. You MUST force OpenMP and any math libraries to use only one thread per MPI rank. On example is setting OMP_NUM_THREADS to "1". You might also consider setting OMPI_MCA_btl_vader_single_copy_mechanism to "cma" as a conservative builder will set to none.
+      You MUST choose initial parameters and use the provided function for guidance about what to change. 
+      The size of the MiniCluster MUST be 1. Tasks MUST be at least 4.
+      To reduce noise in logging, you can set logging.quiet to true.
+    resources: |
+      The resource spec you got earlier is for an autoscaling cluster, so the nodes possible are not there. For your optimization you can choose from the following instance types, and you will need to add the correct nodeSelector with the node.kubernetes.io/instance-type label indicating your choice. You are still limited to one node.      
+        c7a.12xlarge, 48 CPU, 96 GiB Memory, AMD
+        hpc7g.16xlarge, 64 CPU, 128 GiB Memory, ARM (Graviton3)
+        c6in.12xlarge, 24 CPU, 96 GiB Memory, Intel
+        r7iz.8xlarge, 16 CPU, 256 GiB Memory, Intel
+        m6g.12xlarge, 48 CPU, 192 GiB Memory, ARM (Graviton2)
+        t3a.2xlarge, 4 CPU, 32 GiB Memory, AMD
+        t3.2xlarge, 4 CPU, 32 GiB Memory, Intel
+        m6id.12xlarge, 24 CPU, 192 GiB Memory, Intel
+        c6id.12xlarge, 24 CPU, 96 GiB Memory, Intel
+        t4g.2xlarge, 8 CPU, 32 GiB Memory, ARM (Graviton2)
+        m6i.12xlarge, 24 CPU, 192 GiB Memory, Intel
+        m6a.12xlarge, 24 CPU, 192 GiB Memory, AMD
+        m7g.16xlarge, 64 CPU, 256 GiB Memory, ARM (Graviton3)
+        c6i.16xlarge, 32 CPU, 128 GiB Memory, Intel
+        c6a.16xlarge, 32 CPU, 128 GiB Memory, AMD
+        c7g.16xlarge, 64 CPU, 128 GiB Memory, ARM (Graviton3)
+        r6i.8xlarge, 16 CPU, 256 GiB Memory, Intel
+        r6a.12xlarge, 24 CPU, 384 GiB Memory, AMD
+        r7g.12xlarge, 48 CPU, 384 GiB Memory, ARM (Graviton3)
+        i4i.8xlarge, 16 CPU, 256 GiB Memory, Intel
+        d3.4xlarge, 8 CPU, 128 GiB Memory, Intel 
+      If you choose an ARM (Graviton) instance you MUST change the flux.container.image to be
+      ghcr.io/converged-computing/flux-view-rocky:arm-9. Otherwise, do not change or set it.
+      If you are using an ARM instance you MUST also set flux.arch: "arm".
+    testing: |
+      You MUST run AMG -problem 2. For testing choose a small problem size no greater than 4 in any dimension.    
+      If you see a nodeSelector and larger size in the manifest it is OK to keep that and try to debug the issue.
+    details: | 
+      You MUST run on only one node. The size of the MiniCluster MUST be 1 and tasks MUST be at least 4.
+      You MUST NOT oversubscribe.
+    function: |
+        YOU MUST run the function "optimize_amg" on this and subsequent requests.
+        YOU MUST start with something akin to amg -problem 2 -n 128 128 128 -P 8 4 1 with threading one thread per core.
+        You MUST use the function to adjust parameters and decide to RETRY or STOP for each attempt. A timeout may require different paramters or instance type      
+
+        import math
+        from typing import Tuple, Dict, Any, Literal
+        import json
+        def _suggest_balanced_topology(num_ranks: int) -> Tuple[int, int, int]:
+            """Tries to find a balanced 3D decomposition for a given number of ranks."""
+            c = int(num_ranks**(1/3.))
+            while c > 1:
+                if num_ranks % c == 0:
+                    rest = num_ranks // c
+                    b = int(rest**(1/2.))
+                    while b > 1:
+                        if rest % b == 0: a = rest // b; return (a, b, c)
+                        b -= 1
+                c -= 1
+            b = int(num_ranks**(1/2.))
+            while b > 1:
+                if num_ranks % b == 0: a = num_ranks // b; return (a, b, 1)
+                b -= 1
+            return (num_ranks, 1, 1)
+
+        def _suggest_problem_size_from_dofs(total_dofs: int) -> Tuple[int, int, int]:
+            """Creates a balanced 3D problem size from a total DOF count."""
+            side = int(total_dofs**(1/3.))
+            return (side, side, side)
+
+        def _build_command_string(base_command: str, params: Dict[str, Any]) -> str:
+            """Builds the full command string from a base and parameter dictionary."""
+            problem = params['problem_size']
+            topo = params['topology']
+            problem_args = f"-P {problem[0]} {problem[1]} {problem[2]}"
+            topo_args = f"-n {topo[0]} {topo[1]} {topo[2]}"
+            return f"{base_command} {problem_args} {topo_args}"
+
+        Decision = Literal["RETRY", "STOP"]
+        ProblemSize = Tuple[int, int, int]
+        Topology = Tuple[int, int, int]
+
+        def optimize_amg(
+            problem_size: ProblemSize,
+            topology: Topology,
+            total_instance_cpu: int,
+            total_instance_memory_gb: int,
+            cores_per_node: int,
+            threading_hint: int,
+            current_fom: float,
+            executable_command: str,
+            threshold: float = 0.90,
+            ideal_fom_per_core: float = 4.5e8,
+            efficiency_sweet_spot: float = 1.0e6,
+            retry_scale_factor: float = 1.5,
+            dofs_per_gb: float = 1.2e7,
+            memory_safety_factor: float = 0.95
+        ) -> Dict[str, Any]:
+            """
+            Acts as an optimizer for a single-node run, suggesting new parameters
+            and a full execution command. The only STOP condition is meeting the
+            performance threshold or being unable to improve.
+
+            Args:
+                problem_size (tuple): The dimensions of the 3D problem grid that was just run (e.g., Px, Py, Pz).
+                topology (tuple): The 3D process topology of the MPI ranks used for the run (e.g., nx, ny, nz).
+                total_instance_cpu (int): The total number of physical CPU cores available in the entire instance.
+                total_instance_memory_gb (int): The total amount of system RAM, in Gigabytes, available in the entire instance.
+                cores_per_node (int): The number of physical CPU cores on a single compute node.
+                threading_hint (int): Specifies the level of SMT/Hyper-Threading to assume (e.g., 1 for no SMT, 2 for SMT).
+                current_fom (float): The measured "Figure of Merit" (FOM) from the completed run.
+                executable_command (str): The base command string for the AMG executable, excluding problem size and topology.
+                threshold (float): The performance goal, as a fraction of the theoretical maximum FOM. Defaults to 0.90.
+                ideal_fom_per_core (float): A hardware-specific tuning constant for the max FOM of a single core. Defaults to 4.5e8.
+                efficiency_sweet_spot (float): A tuning constant modeling communication overhead (DOFs/rank for ~76% efficiency). Defaults to 1.0e6.
+                retry_scale_factor (float): The multiplier used to increase problem dimensions on a RETRY. Defaults to 1.5.
+                dofs_per_gb (float): A tuning constant for the memory model (DOFs that fit in 1 GB of RAM). Defaults to 1.2e7.
+                memory_safety_factor (float): A safety margin for memory usage (e.g., only use 95% of available RAM). Defaults to 0.95.
+            Returns:
+                (dict): A dictionary containing 'decision', 'reason', and 'resources'.
+            """
+            px, py, pz = problem_size
+            nx, ny, nz = topology
+            total_dofs = px * py * pz
+            total_ranks = nx * ny * nz
+            max_ranks_on_node = cores_per_node * threading_hint
+            num_nodes_in_instance = total_instance_cpu / cores_per_node
+            memory_gb_on_node = total_instance_memory_gb / num_nodes_in_instance
+
+            if total_ranks == 0:
+                next_params = {"problem_size": problem_size, "topology": (1,1,1)}
+                return {
+                    "decision": "RETRY", "reason": "Topology cannot be zero.",
+                    "resources": {"size": 1, "tasks": 1, "command": _build_command_string(executable_command, next_params), "threads": threading_hint}
+                }
+
+            if total_ranks > max_ranks_on_node:
+                suggested_topology = _suggest_balanced_topology(max_ranks_on_node)
+                next_params = {"problem_size": problem_size, "topology": suggested_topology}
+                return {
+                    "decision": "RETRY", "reason": f"Topology of {total_ranks} tasks exceeds the single-node limit of {max_ranks_on_node}. Suggesting smaller topology.",
+                    "resources": {"size": 1, "tasks": max_ranks_on_node, "command": _build_command_string(executable_command, next_params), "threads": threading_hint}
+                }
+
+            max_dofs = memory_gb_on_node * dofs_per_gb * memory_safety_factor
+            if total_dofs > max_dofs:
+                suggested_problem_size = _suggest_problem_size_from_dofs(max_dofs)
+                next_params = {"problem_size": suggested_problem_size, "topology": topology}
+                return {
+                    "decision": "RETRY", "reason": f"Memory constraint violated. Suggesting smaller problem size to fit on one node.",
+                    "resources": {"size": 1, "tasks": total_ranks, "command": _build_command_string(executable_command, next_params), "threads": threading_hint}
+                }
+
+            cpu_per_rank = max_ranks_on_node // total_ranks
+            total_cores_used = total_ranks * cpu_per_rank
+            dofs_per_rank = total_dofs / total_ranks
+            scaling_efficiency = math.tanh(dofs_per_rank / efficiency_sweet_spot)
+            effective_fom_per_core = ideal_fom_per_core * scaling_efficiency
+            theoretical_max_fom = effective_fom_per_core * total_cores_used
+
+            if theoretical_max_fom < 1e-9:
+                return {"decision": "STOP", "reason": "Theoretical max FOM is zero.", "resources": None}
+            
+            performance_ratio = current_fom / theoretical_max_fom
+
+            if performance_ratio >= threshold:
+                return {
+                    "decision": "STOP", "reason": f"Current FOM {current_fom:.2e} is at {performance_ratio:.1%} of theoretical max {theoretical_max_fom:.2e}. Threshold met.",
+                    "resources": None
+                }
+
+            next_problem_size = (int(px * retry_scale_factor), int(py * retry_scale_factor), int(pz * retry_scale_factor))
+            next_total_dofs = next_problem_size[0] * next_problem_size[1] * next_problem_size[2]
+
+            if next_total_dofs > max_dofs:
+                return {
+                    "decision": "STOP", "reason": f"Performance {performance_ratio:.1%} is below threshold, but next larger problem exceeds single-node memory. Best achievable performance found.",
+                    "resources": None
+                }
+            next_params = {"problem_size": next_problem_size, "topology": topology}
+            return {
+                "decision": "RETRY", "reason": f"Performance {performance_ratio:.1%} is below threshold. Suggesting larger problem size.",
+                "resources": {"size": 1, "tasks": total_ranks, "command": _build_command_string(executable_command, next_params), "threads": threading_hint}
+            }

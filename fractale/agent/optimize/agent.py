@@ -90,10 +90,12 @@ class OptimizationAgent(GeminiAgent):
         prompt = prompt or context.get("requires")
 
         # If requirements not specified, we require the "optimize" context
-        if context.get("function") and not prompt:
+        if context.get("function") and self.metadata["optimize_attempts"] == 0:
+            prompt = prompts.get_initial_function_optimize_prompt(context)
+        elif context.get("function"):
             prompt = prompts.get_function_optimize_prompt(context)
         elif not prompt:
-            prompt = prompts.get_function_optimize_prompt(context)
+            prompt = prompts.get_optimize_prompt(context)
 
         # Parser requires is the FOM and optimize directive.
         # This returns a list of foms.

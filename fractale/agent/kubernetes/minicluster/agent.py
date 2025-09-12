@@ -38,17 +38,21 @@ class MiniClusterAgent(KubernetesJobAgent):
         """
         If a view is defined, ensure it is in allowed set.
         """
-        if not minicluster:
-            return minicluster
         view = minicluster.get("spec", {}).get("flux", {}).get("container", {}).get("image")
         if not view:
-            return minicluster
+            return yaml.dump(minicluster)
+
+        # If the agent gets it wrong it needs to know what are valid options
+        comment = ""
         if view not in flux_views:
-            logger.warning(f"Flux view {view} is not valid and will not be used.")
+            comment = f"Flux view {view} is not valid and will not be used."
+            logger.warning(comment)
+            comment = "# " + comment + "\n# Choices include: " + ", ".join(flux_views) + "\n"
             del minicluster["spec"]["flux"]["container"]
             if not minicluster["spec"]["flux"]:
                 del minicluster["spec"]["flux"]
-        return minicluster
+
+        return yaml.dump(minicluster) + "\n" + comment
 
     @timed
     def deploy(self, context):
@@ -71,9 +75,6 @@ class MiniClusterAgent(KubernetesJobAgent):
         if not name:
             return 1, "Generated YAML is missing required '.metadata.name' field."
 
-        # This is a common error the LLM makes
-        minicluster = self.check_flux_view(minicluster)
-
         # If it doesn't follow instructions...
         containers = self.get_containers(minicluster)
         if not containers:
@@ -92,7 +93,8 @@ class MiniClusterAgent(KubernetesJobAgent):
         deploy_dir = tempfile.mkdtemp()
         print(f"[dim]Created temporary deploy context: {deploy_dir}[/dim]")
 
-        context.result = yaml.dump(minicluster)
+        # Write the final minicluster after checking the view
+        context.result = self.check_flux_view(minicluster)
         mc = objects.MiniCluster(name, namespace)
         logger.info(
             f"Attempt {self.attempts} to deploy Kubernetes {mc.kind}: [bold cyan]{mc.namespace}/{mc.name}"

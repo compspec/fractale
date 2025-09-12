@@ -254,7 +254,9 @@ class KubernetesJobAgent(KubernetesAgent):
 
                         # If the pod was OOMKIlled, this shouldn't cycle around as failure during optimization
                         if reason == "OOMKilled" and context.get("is_optimizing"):
-                            return self.optimize(context, obj, context.result, "The last attempt was OOMKilled.")
+                            return self.optimize(
+                                context, obj, context.result, "The last attempt was OOMKilled."
+                            )
 
                         diagnostics = self.get_diagnostics(obj, pod)
                         obj.delete()
@@ -305,6 +307,7 @@ class KubernetesJobAgent(KubernetesAgent):
 
         # Save logs regardless of success or not (so we see change)
         self.save_log(full_logs)
+        context.was_unsatisfiable = "unsatisfiable" in full_logs
 
         # But did it succeed?
         print(final_status)
@@ -321,6 +324,11 @@ class KubernetesJobAgent(KubernetesAgent):
         # If we were optimizing and it was too long, return to optimization agent
         elif context.get("is_optimizing") is True and context.was_timeout:
             return self.optimize(context, obj, context.result, full_logs)
+
+        # We were optimizing and the resource was unsatisfiable
+        elif context.get("is_optimizing") is True and context.was_unsatisfiable:
+            return self.optimize(context, obj, context.result, full_logs)
+
         else:
             print("\n[red]❌ Job final status is Failed.[/red]")
             diagnostics = self.get_diagnostics(obj, pod)

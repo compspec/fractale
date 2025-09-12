@@ -97,7 +97,6 @@ class ResultAgent(GeminiAgent):
 
         # If too many retries, ask for human input - we've hit some rare edge case.
         retries = 0
-        advice = 0
         with_history = True
         attempts = []
 
@@ -105,44 +104,43 @@ class ResultAgent(GeminiAgent):
         match = None
         while not match:
             regex = self.ask_gemini(prompt, with_history=with_history)
+
+            # The last appended will be the final (correct)
+            attempts.append(regex)
             print("Received result parser from Gemini...")
             logger.custom(regex, title="[green]Result Parser[/green]", border_style="green")
             match = self.find_match(regex, log)
             self.metadata["assets"]["tries"] += 1
 
+            # If we have a match, check and cut out earlier
+            if match:
+
+                # If we get a match, ask the user to verify
+                result = match[0]
+                if len(match) > 1:
+                    result = " ".join(match)
+
+                # yes / no / feedback
+                is_correct = confirm_correct(log, result)
+                if is_correct is True:
+                    self.metadata["assets"]["regex-attempts"] = attempts
+                    return regex
+                elif is_correct is None:
+                    prompt += "\n" + input("Please enter feedback for the LLM:\n")
+                else:
+                    prompt += f"\nHere is a previous attempt that produced a match but was incorrect content: {regex}"
+
             # Ensure it doesn't make the same mistake...
-            if not match:
-                prompt += f"\nHere is a previous unsuccessful attempt: {regex}"
-                continue
-
-            # If we get a match, ask the user to verify
-            result = match[0]
-            if len(match) > 1:
-                result = " ".join(match)
-            is_correct = confirm_correct(log, result)
-            if is_correct is True:
-                return regex
-
-            # Feedback case
-            elif is_correct is None:
-                prompt += "\n" + input("Please enter feedback for the LLM:\n")
             else:
-                prompt += f"\nHere is a previous unsuccessful attempt: {regex}"
-                attempts.append(regex)
-
-            # If more than 5 retries, ask for human help
-            # Unlike retries, this counter resets
-            if advice >= 3:
-                prompt += "\n" + input("The agent is having trouble. Please provide advice:\n")
-                advice += 1
+                prompt += f"\nHere is a previous unsuccessful attempt that did not match anything: {regex}"
 
             # Usually this indicates a problem.
             if retries >= 5:
                 prompt = prompts.parsing_prompt % (requires, log)
                 with_history = False
+                retries = 0
 
             retries += 1
-            advice += 1
 
             # If it's not correct, we need to try again
             match = None

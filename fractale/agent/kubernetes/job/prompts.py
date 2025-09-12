@@ -77,6 +77,7 @@ Your task is to optimize the running of a Kubernetes abstraction: {{optimize}} i
     Here is the Dockerfile that helped to generate the application.
     {{dockerfile}}{% endif %}
 {% if was_timeout %}Your last attempt timed out, which means you MUST reduce problem size OR increase resources (if possible){% endif %}
+{% if was_unsatisfiable %}Your last attempt was unsatisfiable. The topology or other parameters might be wrong.{% endif %}
 """
 
 optimize_function_task = """Your task is to use a function to optimize the running of a Kubernetes abstraction: {{optimize}} in {{environment}}. You MUST use this function that returns RETRY or STOP.
@@ -95,6 +96,8 @@ You MUST call the function to derive parameters and a 'decision' and 'reason' an
     ```{% if dockerfile %}
     Here is the Dockerfile that helped to generate the application.
     {{dockerfile}}{% endif %}
+{% if was_timeout %}Your last attempt timed out, which means you MUST reduce problem size OR increase resources (if possible){% endif %}
+{% if was_unsatisfiable %}Your last attempt was unsatisfiable. The topology or other parameters might be wrong.{% endif %}
 """
 
 optimize_function_instructions = [
@@ -150,6 +153,8 @@ def get_optimize_prompt(context, resources):
                 "function": context.function,
                 "environment": context.environment,
                 "resources": json.dumps(resources),
+                "was_timeout": context.was_timeout,
+                "was_unsatisfiable": context.was_unsatisfiable,
                 "manifest": context.result,
                 "dockerfile": context.get("dockerfile"),
             }
@@ -161,6 +166,7 @@ def get_optimize_prompt(context, resources):
             # This is a resource spec provided by user (e.g., autoscaling cluster)
             "resources": context.get("resources"),
             "was_timeout": context.was_timeout,
+            "was_unsatisfiable": context.was_unsatisfiable,
             "environment": context.environment,
             # These are cluster resources found
             "cluster": json.dumps(resources),

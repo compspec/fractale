@@ -1,5 +1,3 @@
-import os
-
 from .database import DatabaseSolver
 
 # Don't require graph_tool

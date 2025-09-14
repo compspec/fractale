@@ -100,7 +100,6 @@ class MiniClusterAgent(KubernetesJobAgent):
             f"Attempt {self.attempts} to deploy Kubernetes {mc.kind}: [bold cyan]{mc.namespace}/{mc.name}"
         )
         p = mc.apply(context.result)
-
         if p.returncode != 0:
             print("[red]'kubectl apply' failed. The manifest is likely invalid.[/red]")
             return (p.returncode, p.stdout + p.stderr + prompts.get_explain_prompt(self.explain()))

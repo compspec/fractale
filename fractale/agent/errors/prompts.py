@@ -4,7 +4,7 @@ from fractale.agent.prompts import Prompt
 persona = "You are a debugging agent and expert."
 context = "We attempted the following piece of code and had problems."
 debug_task = """Please identify the error and advise for how to fix it. The agent you are returning to can only make scoped changes, which we provide below. {% if return_to_manager %}If you determine the issue cannot be resolved by changing one of these files, we will need to return to another agent. In this case, please provide "RETURN TO MANAGER" anywhere in your response.{% endif %}
-If you would like a human to add comment to how to address the issue, put "RETURN TO HUMAN" anywhere in your response and include any questions you have about the issue. You can ONLY choose one source of help.
+{% if return_to_human %}If you would like a human to add comment to how to address the issue, put "RETURN TO HUMAN" anywhere in your response and include any questions you have about the issue. You can ONLY choose one source of help.{% endif %}
 {% if requires %}{% for item in requires %}  - {{item}}\n{% endfor %}{% endif %}
 Here is additional context to guide your instruction. YOU CANNOT CHANGE THESE VARIABLES OR FILES OR SUGGEST TO DO SO.
   {{ context }}
@@ -35,11 +35,23 @@ def get_debug_prompt(context, requires):
         if key == "details":
             key = "details from user"
         additional_context += f"{key} is defined as: {value}\n"
+
+    # Fine grained control of return to manager or human
+    return_to_manager = (
+        context.get("return_to_manager") is not False
+        and context.get("allow_return_to_manager") is not False
+    )
+    return_to_human = (
+        context.get("return_to_human") is not False
+        and context.get("allow_return_to_human") is not False
+    )
+
     return Prompt(debug_prompt, context).render(
         {
             "error_message": error_message,
             # Return to manager MUST be False
-            "return_to_manager": context.get("return_to_manager") is not False,
+            "return_to_manager": return_to_manager,
+            "return_to_human": return_to_human,
             "requires": requires,
             "context": additional_context,
             "code_block": code_block,

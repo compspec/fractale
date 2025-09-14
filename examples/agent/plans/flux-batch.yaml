@@ -1,0 +1,7 @@
+name: Generate a Flux batch job for LAMMPS
+description: Generate and validate a flux batch job for running LAMMPS.
+plan:
+
+- agent: flux-batch
+  context:
+    instruction: Run the reaxff problem with lammps (lmp) on 2 nodes, 8 cores.

@@ -45,23 +45,27 @@ def get_optimize_prompt(context):
 # Optimization Function Agent
 persona = "You are an optimization agent. Your expertise is in writing functions in Python to optimize one or more metrics of interest."
 context = "There are several agents trying to build and deploy HPC applications, and they come to you to optimize."
-function_instructions = [
-    "Please consider application resources such as CPU and memory in context of constraints.",
-    "You are not allowed to request changes to any configuration beyond the application execution command.",
-]
 
-optimize_function_task = """Read the optimization problem below and write a function in python that can be used to optimize one or more metrics of interest.
-Here are your instructions:
+initial_optimize_function_task = """Your task is to {{optimize}}. The provided function below takes in input parameters that coincide with application parameters and resources.
+You should figure out needed parameters and run the function to get a response. Once you have the response, you must follow instructions below for what to return to me.
 
-{{instructions}}
+{{function}}
+"""
+
+optimize_function_task = """You MUST continue to use the function(s) that were originally provided.
+You should figure out needed parameters and run the function to get a response. Once you have the response, you must follow instructions below for what to return to me.
+
+{{optimize}}
 """
 
 optimize_function_instructions = [
-    "Explain your choices via inline comments in the code.",
-    "You MUST include, as function comment, how the algorithm works and why you chose it.",
-    "The function MUST return RETRY to redo the run (not optimized) or STOP to not proceed (optimized)",
-    "Your function should return a dict that can be used to update the application and resources deployed to.",
-    "You can ONLY return parameters for resources cpu, memory, nodes, and environment variables, formatting as a JSON string that can be parsed.",
+    "You MUST format the response in a JSON string that can be parsed",
+    "Your result MUST only contain fields `decision` `reason` and `manifest`"
+    "The manifest MUST ONLY contain changed parameters and resources provided by the function.",
+    "Include a 'result' field that shows the result of running the function and 'input' with your inputs",
+    "You MUST not make changes from what the function provides, but provide description if you add to it",
+    "You MAY make changes ONLY if you are desperate. If you do, you MUST provide a 'changes' field to describe the rationale.",
+    "The decision MUST be either RETRY to redo the run (not optimized) or STOP to not proceed (optimized)",
 ]
 
 function_optimize_prompt = {
@@ -71,6 +75,19 @@ function_optimize_prompt = {
     "task": optimize_function_task,
 }
 
+initial_function_optimize_prompt = {
+    "persona": persona,
+    "context": context,
+    "instructions": optimize_function_instructions,
+    "task": initial_optimize_function_task,
+}
+
+
+def get_initial_function_optimize_prompt(context):
+    return Prompt(initial_function_optimize_prompt, context).render(
+        {"function": context.function, "optimize": context.optimize}
+    )
+
 
 def get_function_optimize_prompt(context):
-    return Prompt(function_optimize_prompt, context).render({"instructions": context.requires})
+    return Prompt(function_optimize_prompt, context).render({"optimize": context.optimize})

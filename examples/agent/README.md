@@ -4,6 +4,14 @@ Let's use fractale to run build, execute, and deploy agents. First now we will r
 
 ## A-la-carte
 
+### Batch Job Generation
+
+Here is how to give a description to generate a Flux batch job. I chose these intentionally over jobspecs.
+
+```bash
+fractale agent --plan ./plans/flux-batch.yaml
+```
+
 ### Build
 
 The build agent will use the Gemini API to generate a Dockerfile and then build until it succeeds. We would need subsequent agents to test it.

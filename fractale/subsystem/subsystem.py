@@ -1,11 +1,9 @@
 import os
-import sqlite3
 
 import fractale.defaults as defaults
-import fractale.subsystem.queries as queries
 import fractale.subsystem.solver as solvers
 import fractale.utils as utils
-from fractale.logger import LogColors, logger
+from fractale.logger import LogColors
 
 
 class SubsystemSolver:

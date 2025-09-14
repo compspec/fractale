@@ -67,12 +67,6 @@ optimize_instructions = [
     "You MUST NOT make requests that lead to Guaranteed pods.",
 ]
 
-optimize_function_instructions = optimize_instructions + [
-    "You MUST also include a 'function' field to return a response to RETRY or STOP based on your algorithm of choice.",
-    "The function MUST take the specified figure(s) of merit or optimization metric indicated as input",
-    "The function MUST return RETRY or STOP to indicate the optimization decision",
-]
-
 optimize_task = """
 Your task is to optimize the running of a Kubernetes abstraction: {{optimize}} in {{environment}}. You are allowed to request anywhere in the range of available resources, including count and type. Here are the available resources:
     {{resources}}
@@ -83,21 +77,37 @@ Your task is to optimize the running of a Kubernetes abstraction: {{optimize}} i
     Here is the Dockerfile that helped to generate the application.
     {{dockerfile}}{% endif %}
 {% if was_timeout %}Your last attempt timed out, which means you MUST reduce problem size OR increase resources (if possible){% endif %}
+{% if was_unsatisfiable %}Your last attempt was unsatisfiable. The topology or other parameters might be wrong.{% endif %}
 """
 
-optimize_function_task = """
-Your task is to write a function to optimize the running of a Kubernetes abstraction: {{optimize}} in {{environment}}. You MUST write a function that returns RETRY or STOP depending on the algorithm that you choose.
-You are allowed to request anywhere in the range of available resources, including count and type. Here are the existing resources:
+optimize_function_task = """Your task is to use a function to optimize the running of a Kubernetes abstraction: {{optimize}} in {{environment}}. You MUST use this function that returns RETRY or STOP.
+The provided function(s) below take in input parameters that coincide with application parameters and resources.
+You MUST derive input parameters and run the function to get a response. Once you have the response, you MUST follow instructions below for what to return to me.
+
+{{function}}
+
+You MUST call the function to derive parameters and a 'decision' and 'reason' and updated 'manifest'. To start you can choose the parameters to best optimize. Here are the existing resources:
     {{cluster}}
     {% if resources %}Here is resource information provided by the user:
-    {{resources}}{% end %}
+    {{resources}}{% endif %}
     Here is the current manifest:
     ```yaml
     {{manifest}}
     ```{% if dockerfile %}
     Here is the Dockerfile that helped to generate the application.
     {{dockerfile}}{% endif %}
+{% if was_timeout %}Your last attempt timed out, which means you MUST reduce problem size OR increase resources (if possible){% endif %}
+{% if was_unsatisfiable %}Your last attempt was unsatisfiable. The topology or other parameters might be wrong.{% endif %}
 """
+
+optimize_function_instructions = [
+    "You MUST format the response in a JSON string that can be parsed",
+    "Your result MUST only contain fields `decision` `reason` and `manifest`"
+    "The manifest MUST ONLY contain changed parameters and resources provided by the function.",
+    "You MUST not make changes from what the function provides, but provide description if you add to it",
+    "The decision MUST be either RETRY to redo the run (not optimized) or STOP to not proceed (optimized)",
+] + optimize_instructions
+
 
 optimize_prompt = {
     "persona": optimize_persona,
@@ -137,12 +147,14 @@ def get_optimize_prompt(context, resources):
     Get a description of cluster resources and optimization goals.
     """
     if context.get("function"):
-        raise ValueError("Using a function is not fully implemented yet.")
         return Prompt(optimize_function_prompt, context).render(
             {
                 "optimize": context.optimize,
+                "function": context.function,
                 "environment": context.environment,
                 "resources": json.dumps(resources),
+                "was_timeout": context.was_timeout,
+                "was_unsatisfiable": context.was_unsatisfiable,
                 "manifest": context.result,
                 "dockerfile": context.get("dockerfile"),
             }
@@ -154,6 +166,7 @@ def get_optimize_prompt(context, resources):
             # This is a resource spec provided by user (e.g., autoscaling cluster)
             "resources": context.get("resources"),
             "was_timeout": context.was_timeout,
+            "was_unsatisfiable": context.was_unsatisfiable,
             "environment": context.environment,
             # These are cluster resources found
             "cluster": json.dumps(resources),

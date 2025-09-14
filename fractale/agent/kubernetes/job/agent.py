@@ -196,6 +196,7 @@ class KubernetesJobAgent(KubernetesAgent):
         Watch for pod / job object and finish deployment.
         """
         pod = None
+        context.was_oom = False
 
         # This assumes a backoff / retry of 1, so we aren't doing recreation
         # If it fails once, it fails once and for all.
@@ -250,6 +251,13 @@ class KubernetesJobAgent(KubernetesAgent):
                     # This is important because a pod can be active, but then go into a crashed state
                     # We provide the status that coincides with our info query to be consistent
                     if reason := pod.has_failed_container(pod_status):
+
+                        # If the pod was OOMKIlled, this shouldn't cycle around as failure during optimization
+                        if reason == "OOMKilled" and context.get("is_optimizing"):
+                            return self.optimize(
+                                context, obj, context.result, "The last attempt was OOMKilled."
+                            )
+
                         diagnostics = self.get_diagnostics(obj, pod)
                         obj.delete()
                         return (
@@ -299,9 +307,11 @@ class KubernetesJobAgent(KubernetesAgent):
 
         # Save logs regardless of success or not (so we see change)
         self.save_log(full_logs)
+        context.was_unsatisfiable = "unsatisfiable" in full_logs
 
         # But did it succeed?
         print(final_status)
+
         if final_status.get("succeeded", 0) > 0:
             print("\n[green]✅ Job final status is Succeeded.[/green]")
 
@@ -314,6 +324,11 @@ class KubernetesJobAgent(KubernetesAgent):
         # If we were optimizing and it was too long, return to optimization agent
         elif context.get("is_optimizing") is True and context.was_timeout:
             return self.optimize(context, obj, context.result, full_logs)
+
+        # We were optimizing and the resource was unsatisfiable
+        elif context.get("is_optimizing") is True and context.was_unsatisfiable:
+            return self.optimize(context, obj, context.result, full_logs)
+
         else:
             print("\n[red]❌ Job final status is Failed.[/red]")
             diagnostics = self.get_diagnostics(obj, pod)

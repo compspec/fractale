@@ -1,5 +1,5 @@
-import os
 import sqlite3
+from rich import print
 
 import fractale.subsystem.queries as queries
 from fractale.logger import LogColors, logger
@@ -152,8 +152,14 @@ class DatabaseSolver(Solver):
             nodes = set()
             i = 0
             for key, value in item.items():
-                statement = f"SELECT * from attributes WHERE cluster = '{cluster}' AND subsystem = '{name}' AND name = '{key}' AND value like '{value}';"
+
+                # Look for exact match first
+                statement = f"SELECT * from attributes WHERE cluster = '{cluster}' AND subsystem = '{name}' AND value = '{key}';"
                 result = self.query(statement)
+                if not result:
+                    statement = f"SELECT * from attributes WHERE cluster = '{cluster}' AND subsystem = '{name}' AND name = '{key}' AND value like '{value}';"
+                    result = self.query(statement)
+
                 # We don't have any nodes yet, all are contenders
                 if i == 0:
                     [nodes.add(x[-1]) for x in result]

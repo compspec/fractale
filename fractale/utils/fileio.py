@@ -1,11 +1,11 @@
 import json
 import os
+import platform
 import re
 import stat
 import subprocess
 import tempfile
 from contextlib import contextmanager
-import platform
 
 import yaml
 
@@ -33,6 +33,9 @@ def load_jobspec(filename):
     """
     Load a jobspec. First try yaml and fall back to json
     """
+    # It is already loaded!
+    if isinstance(filename, dict):
+        return filename
     try:
         return read_yaml(filename)
     except:

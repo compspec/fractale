@@ -19,6 +19,7 @@ INSTALL_REQUIRES = (
     ("compspec", {"min_version": None}),
     ("compspec-spack", {"min_version": None}),
     ("compspec-modules", {"min_version": None}),
+    ("compspec-containment", {"min_version": None}),
     # Yeah, probably overkill, just being used for printing the scripts
     ("rich", {"min_version": None}),
 )

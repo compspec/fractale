@@ -5,8 +5,16 @@ import stat
 import subprocess
 import tempfile
 from contextlib import contextmanager
+import platform
 
 import yaml
+
+
+def get_local_cluster():
+    """
+    Guess the local cluster based on the hostname
+    """
+    return platform.node().split("-")[0]
 
 
 def read_json(filename):

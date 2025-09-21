@@ -100,10 +100,13 @@ class Solver:
         We also are careful to store metadata here that might be needed for
         rendering.
         """
+        print('TEST LOAD')
+        import IPython 
+        IPython.embed()
         from fractale.subsystem.subsystem import Subsystem
 
         self.metadata = {}
-
+        
         if not os.path.exists(path):
             raise ValueError(f"User subsystem directory {path} does not exist.")
         files = utils.recursive_find(path, "graph[.]json")

@@ -1,10 +1,8 @@
 import os
 
-from rich import print
-
 import fractale.jobspec as jspec
 import fractale.utils as utils
-from fractale.logger import LogColors
+from fractale.logger import LogColors, logger
 from fractale.subsystem.match import MatchSet
 
 
@@ -27,8 +25,6 @@ class Solver:
         """
         # This handles json or yaml
         js = utils.load_jobspec(jobspec)
-
-        # Even if requires is not defined, we will add containment
         requires = js["attributes"].get("system", {}).get("requires") or {}
 
         # Special case: containment - these come from resources in the jobspec
@@ -41,6 +37,32 @@ class Solver:
         Take in a set of cluster matches and
         """
         return []
+
+    def print_count(self, printed, count):
+        """
+        Print formatted query and count of results.
+        """
+        if len(printed) > 150:
+            printed = printed[:150] + "..."
+        printed = f"{LogColors.OKCYAN}{printed}{LogColors.ENDC}"
+        count = (f"{LogColors.PURPLE}({count}){LogColors.ENDC} ").rjust(20)
+        logger.info(count + printed)
+
+    def assess_containment(self, requires):
+        """
+        A rough heuirstic to see if the cluster has enough resources
+        of specific types.
+        """
+        for typ, count in requires.items():
+            if typ not in self.subsystems.get("containment", {}):
+                self.print_count(f"Count {typ} containment", 0)
+                return False
+            have_count = self.subsystems["containment"][typ]
+            if have_count < count:
+                self.print_count(f"SELECT {typ} containment", have_count)
+                return False
+            self.print_count(f"SELECT {typ} containment", have_count)
+        return True
 
     def satisfied(self, jobspec, return_results=False):
         """

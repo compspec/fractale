@@ -7,7 +7,6 @@ import fractale.defaults as defaults
 import fractale.utils as utils
 
 
-
 class FractaleStore:
     """
     A FractaleStore is a metadata root for subsytsems and clusters.

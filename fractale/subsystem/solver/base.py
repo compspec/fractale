@@ -1,9 +1,9 @@
-import json
 import os
 
 import fractale.jobspec as jspec
 import fractale.utils as utils
-from fractale.logger import LogColors, logger
+from rich import print
+from fractale.logger import LogColors
 from fractale.subsystem.match import MatchSet
 
 
@@ -27,7 +27,8 @@ class Solver:
         # This handles json or yaml
         js = utils.load_jobspec(jobspec)
 
-        requires = js["attributes"].get("system", {}).get("requires")
+        # Even if requires is not defined, we will add containment
+        requires = js["attributes"].get("system", {}).get("requires") or {}
 
         # Special case: containment - these come from resources in the jobspec
         # we can try matching if we have defined containment subsystems
@@ -53,11 +54,18 @@ class Solver:
         # We could optimize this to be fewer queries, but it's likely trivial for now
         for subsystem_type, items in requires.items():
 
+            # This is likely a single dict, but ensure we support future list of requests
+            if isinstance(items, dict):
+                items = [items]
+
             # Get one or more matching subsystems (top level) for some number of clusters
             # The subsystem type is like the category (e.g., software)
             subsystems = self.get_subsystem_by_type(subsystem_type)
+
+            # If we don't have the subsystem, we cannot satisfy the request. We don't know.
             if not subsystems:
-                continue
+                print(f"Subsystem '{subsystem_type}' is not known.")
+                return False
 
             # For each subsystem, since we don't have a query syntax developed, we just look for nodes
             # that have matching attributes. Each here is a tuple, (name, cluster, type)
@@ -79,6 +87,7 @@ class Solver:
                 nodes = self.find_nodes(cluster, name, items)
                 if not nodes:
                     continue
+
                 # This is adding cluster, subsystem name, match criteria, and node ids
                 matches.add(cluster, name, items, nodes)
 
@@ -100,13 +109,10 @@ class Solver:
         We also are careful to store metadata here that might be needed for
         rendering.
         """
-        print('TEST LOAD')
-        import IPython 
-        IPython.embed()
         from fractale.subsystem.subsystem import Subsystem
 
         self.metadata = {}
-        
+
         if not os.path.exists(path):
             raise ValueError(f"User subsystem directory {path} does not exist.")
         files = utils.recursive_find(path, "graph[.]json")

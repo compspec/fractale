@@ -152,26 +152,29 @@ class DatabaseSolver(Solver):
         for item in items:
             nodes = set()
             i = 0
-            for key, value in item.items():
-
-                # Look for exact match first
-                statement = f"SELECT * from attributes WHERE cluster = '{cluster}' AND subsystem = '{name}' AND value = '{key}';"
-                result = self.query(statement)
-                if not result:
-                    statement = f"SELECT * from attributes WHERE cluster = '{cluster}' AND subsystem = '{name}' AND name = '{key}' AND value like '{value}';"
+            for _, values in item.items():
+                for key, value in values.items():
+                    # Look for exact match first. IMPORTANT: this is looking just at the subsystem name (E.g., spack) which assumes subsystem names are
+                    # unique. We probably want to check for this or add in the subsystem type here
+                    statement = f"SELECT * from attributes WHERE cluster = '{cluster}' AND subsystem = '{name}' AND value = '{value}';"
                     result = self.query(statement)
 
-                # We don't have any nodes yet, all are contenders
-                if i == 0:
-                    [nodes.add(x[-1]) for x in result]
-                else:
-                    new_nodes = {x[-1] for x in result}
-                    nodes = nodes.intersection(new_nodes)
-                i += 1
+                    # For most cases, the value is going to be akin to binary123
+                    if not result:
+                        statement = f"SELECT * from attributes WHERE cluster = '{cluster}' AND subsystem = '{name}' AND value like '{value}';"
+                        result = self.query(statement)
 
-                # If we don't have nodes left, the cluster isn't a match
-                if not nodes:
-                    return
+                    # We don't have any nodes yet, all are contenders
+                    if i == 0:
+                        [nodes.add(x[-1]) for x in result]
+                    else:
+                        new_nodes = {x[-1] for x in result}
+                        nodes = nodes.intersection(new_nodes)
+                    i += 1
+
+                    # If we don't have nodes left, the cluster isn't a match
+                    if not nodes:
+                        return
 
             # If we get down here, we found a matching node for one item requirement
             [satisfy.add(x) for x in nodes]
@@ -182,33 +185,13 @@ class DatabaseSolver(Solver):
         Issue a query to the database, returning fetchall.
         """
         cursor = self.conn.cursor()
-        printed = statement
-
-        # Don't overwhelm the output!
-        if len(printed) > 150:
-            printed = printed[:150] + "..."
-        printed = f"{LogColors.OKCYAN}{printed}{LogColors.ENDC}"
         cursor.execute(statement)
         self.conn.commit()
 
         # Get results, show query and number of results
         results = cursor.fetchall()
-        count = (f"{LogColors.PURPLE}({len(results)}){LogColors.ENDC} ").rjust(20)
-        logger.info(count + printed)
+        self.print_count(statement, len(results))
         return results
-
-    def assess_containment(self, requires):
-        """
-        A rough heuirstic to see if the cluster has enough resources
-        of specific types.
-        """
-        for typ, count in requires.items():
-            if typ not in self.subsystems.get("containment", {}):
-                return False
-            have_count = self.subsystems["containment"][typ]
-            if have_count < count:
-                return False
-        return True
 
     def get_subsystem_by_type(self, subsystem_type, ignore_missing=True):
         """

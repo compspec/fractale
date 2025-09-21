@@ -1,4 +1,5 @@
 import sqlite3
+
 from rich import print
 
 import fractale.subsystem.queries as queries

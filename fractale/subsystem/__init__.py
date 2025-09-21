@@ -9,8 +9,4 @@ def get_subsystem_solver(path, backend="database"):
     to be a set of <cluster>/<subsystem>. For the FractaleStore, this
     is the store.clusters_root.
     """
-    if not os.path.exists(path):
-        raise ValueError(f"Cluster subsystem root {path} does not exist")
-
-    # Generate the subsystem registry
     return SubsystemSolver(path, backend)

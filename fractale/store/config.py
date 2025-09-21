@@ -26,9 +26,11 @@ class FractaleStore:
     def clusters_root(self):
         return os.path.join(self.root, "clusters")
 
-    def detect(self):
+    def detect(self, force=False):
         """
         Detect subsystems.
+
+        If force is True, force update of existing metadata.
         """
         from compspec.plugin.registry import PluginRegistry
 
@@ -40,12 +42,23 @@ class FractaleStore:
             # Plugins are not required to implement detection
             if not hasattr(module, "detect"):
                 continue
-            print(f"Detection for '{plugin}'")
 
             # A detection is headless extraction
             if module.check():
+
+                # Don't rewrite existing files, unless told to...
+                graph_path = os.path.join(self.cluster_subsystem(cluster, plugin), "graph.json")
+                if os.path.exists(graph_path) and not force:
+                    continue
                 graph = module.detect()
+
+                # No graph produced
+                if not graph:
+                    continue
+
+                # Save and alert the user
                 self.save_subsystem(cluster, plugin, graph)
+                print(f"  [green]=>[/green] Updated '{plugin}'")
 
     def save_subsystem(self, cluster_name, plugin_name, graph):
         """

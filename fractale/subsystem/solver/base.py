@@ -1,8 +1,9 @@
 import os
 
+from rich import print
+
 import fractale.jobspec as jspec
 import fractale.utils as utils
-from rich import print
 from fractale.logger import LogColors
 from fractale.subsystem.match import MatchSet
 

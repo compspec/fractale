@@ -139,6 +139,9 @@ class GraphSolver(Solver):
 
         # First get cluster contenders based on subsystem requirements
         # Note we are passing in a list so we get it back :)
+        print(
+            f"{LogColors.OKBLUE}Checking subsystems for {len(requires)} requirements{LogColors.ENDC}"
+        )
         is_satisfied, matches = self.check_subsystem_satisfies(requires)
         if not is_satisfied:
             return MatchSet()
@@ -333,8 +336,12 @@ class GraphSolver(Solver):
         # Subsystem requirements first
         # Note that these subsystems aren't like spack, modules, etc., they are "software" and more general.
         for subsystem, values in requires.items():
+
+            # Containment is done with an actual graph traversal akin to fluxion (but much worse because I wrote it)
             if subsystem == "containment":
                 continue
+
+            print(f"    {LogColors.PURPLE}=> Exploring subsystem {subsystem}{LogColors.ENDC}")
 
             # We need to keep track of vertices satisfied (for each valueset)
             satisfied_sets = []
@@ -342,7 +349,8 @@ class GraphSolver(Solver):
             # Keep track of solutions to send back
             # Each valueset is a set of requirements for a node - we assume number is small
             # All requirements (multiple subsystems, for example) must be met for a single cluster.
-            for valueset in values:
+            for name, valueset in values.items():
+
                 # Within a valueset (a dict of properties that must apply to one node)
                 # we need to have overlapping vertices. This is stupid and inefficient, but it
                 vertices_satisfied = None
@@ -368,6 +376,12 @@ class GraphSolver(Solver):
                         )
                         return False, matches
 
+                    status = f"   {LogColors.PURPLE}({len(vertices)}) {LogColors.ENDC}".rjust(25)
+                    print(
+                        status
+                        + f"{LogColors.OKCYAN} vertices satisfy {key} = {value} {LogColors.ENDC}"
+                    )
+
                     # If we get here, we have vertices. We need to consider vertex and cluster overlap
                     if vertices_satisfied is None:
                         vertices_satisfied = set(vertices)
@@ -379,11 +393,8 @@ class GraphSolver(Solver):
                             )
                             return False, matches
 
-                        # If we get here, there was an intersection, so add it
-                        [
-                            vertices_satisfied.add(v)
-                            for v in vertices_satisfied.intersection(vertices)
-                        ]
+                    # If we get here, there was an intersection, so add it
+                    [vertices_satisfied.add(v) for v in vertices_satisfied.intersection(vertices)]
 
                     # Now the same for clusters.
                     # If we haven't defined contenders yet, all here are considered.
@@ -407,7 +418,7 @@ class GraphSolver(Solver):
 
                         # If we get here, we still have contender clusters
                         [contenders.add(c) for c in contenders.intersection(new_contenders)]
-                        satisfied_sets.append([valueset, vertices_satisfied])
+                    satisfied_sets.append([valueset, vertices_satisfied])
 
             # If we make it here, we've satisfied all valuesets for a subsystem
             for satisfied_set in satisfied_sets:
@@ -425,4 +436,5 @@ class GraphSolver(Solver):
                 f"{LogColors.RED}=> No Matches for any cluster for subsystem requirements{LogColors.ENDC}"
             )
             return False, contenders
+
         return True, matches

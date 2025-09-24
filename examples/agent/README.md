@@ -4,6 +4,26 @@ Let's use fractale to run build, execute, and deploy agents. First now we will r
 
 ## A-la-carte
 
+### Testing Prompts
+
+You can use the agentic base to test prompts. For example:
+
+```python
+from fractale.agent.base import GeminiAgent
+
+agent = GeminiAgent()
+reponse = agent.ask_gemini(prompt)
+```
+
+### Cost Estimation
+
+The cost estimation agent can receive application and environment requiremnts, and provide a listing of the applications, environments (cloud), estimated cost, and instance types for each. In the case of an application supporting GPU, a GPU instance can be provided too.
+
+```bash
+fractale agent --plan ./plans/cost-estimate.yaml
+```
+
+
 ### Batch Job Generation
 
 Here is how to give a description to generate a Flux batch job. I chose these intentionally over jobspecs.

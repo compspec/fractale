@@ -4,6 +4,7 @@ import fractale.jobspec as jspec
 import fractale.utils as utils
 from fractale.logger import LogColors, logger
 from fractale.subsystem.match import MatchSet
+from fractale.subsystem.select import get_selector
 
 
 class Solver:
@@ -63,6 +64,18 @@ class Solver:
                 return False
             self.print_count(f"SELECT {typ} containment", have_count)
         return True
+
+    def select(self, clusters, algorithm="random"):
+        """
+        Perform selection based on a chosen algorithm.
+        Ideas:
+
+        2. Random: the default
+        2. Cost: Give the agent the resource specs, ask for lowest cost.
+        3. Time to run: Give the agent queue pending times.
+        """
+        selector = get_selector(algorithm)
+        return selector.select(clusters)
 
     def satisfied(self, jobspec, return_results=False):
         """

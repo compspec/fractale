@@ -1,5 +1,5 @@
 import fractale.utils as utils
-from fractale.selector import get_selector
+from fractale.select import get_selector
 
 
 class TransformerBase:

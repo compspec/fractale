@@ -1,0 +1,8 @@
+name: Cost estimation for several HPC applications
+description: Generate cost estimate for 4 HPC applications
+plan:
+
+- agent: cost
+  context:
+    instruction: |
+       Find the best instance type that will be performant and minimize cost for each of LAMMPS, Laghos, AMG2023, and Kripke on each of Amazon Web Services and Google Cloud.

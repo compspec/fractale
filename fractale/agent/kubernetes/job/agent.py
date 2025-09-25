@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import shutil
@@ -54,14 +55,10 @@ class KubernetesJobAgent(KubernetesAgent):
         """
         Validation for the context.
         """
-        # We can't optimize and scale (scaling does optimization)
-        if context.get('scale') is not None and context.get('optimize') is not None:
-            raise ValueError("Only one of 'scale' and 'optimize' is allowed")
-
         # If we are requesting a scale, we need the sizes.
-        if context.get('scale') is not None:
-            sizes = context.get('sizes')
-            if not sizes:
+        if context.get("scale") is not None:
+            sizes = context.get("sizes")
+            if sizes is None:
                 raise ValueError("The 'sizes' field is required in context to scale.")
             if not isinstance(sizes, list):
                 raise ValueError("The 'sizes' field must be a list")
@@ -87,42 +84,47 @@ class KubernetesJobAgent(KubernetesAgent):
             self.print_result(manifest)
             logger.success(f"Deploy complete in {self.attempts} attempts")
         else:
-            logger.error(f"Deploy failed:\n{output[-1000:]}", title="Deploy Status")
-            print(
-                f"\n[bold cyan] Requesting Correction from Kubernetes {self.name.capitalize()} Agent[/bold cyan]"
-            )
-
-            # Ask the debug agent to better instruct the error message
-            context.error_message = output
-
-            # This updates the error message to be the output
-            context = DebugAgent().run(context, requires=prompts.requires)
-
-            # Update and reset return to human. We don't touch return to manager (done below)
-            self.reset_return_actions(context)
-
-            # Return early based on max attempts
-            if self.reached_max_attempts() or context.get("return_to_manager") is True:
-                context.return_to_manager = False
-
-                # If we are being managed, return the result
-                if context.is_managed():
-                    context.return_code = -1
-                    context.result = context.error_message
-                    return context
-
-                # Otherwise this is a failure state
-                logger.exit(f"Max attempts {self.max_attempts} reached.", title="Agent Failure")
-
-            self.attempts += 1
-
-            # Trigger again, provide initial context and error message
-            # This is the internal loop running, no manager agent
-            context.result = manifest
-            return self.run_step(context)
-
+            return self.handle_failed_job(context, output, manifest)
         self.write_file(context, manifest)
         return context
+
+    def handle_failed_job(self, context, output, manifest):
+        """
+        Handle a failed job
+        """
+        logger.error(f"Deploy failed or lost:\n{output[-1000:]}", title="Deploy Status")
+        print(
+            f"\n[bold cyan] Requesting Correction from Kubernetes {self.name.capitalize()} Agent[/bold cyan]"
+        )
+
+        # Ask the debug agent to better instruct the error message
+        context.error_message = output
+
+        # This updates the error message to be the output
+        context = DebugAgent().run(context, requires=prompts.requires)
+
+        # Update and reset return to human. We don't touch return to manager (done below)
+        self.reset_return_actions(context)
+
+        # Return early based on max attempts
+        if self.reached_max_attempts() or context.get("return_to_manager") is True:
+            context.return_to_manager = False
+
+            # If we are being managed, return the result
+            if context.is_managed():
+                context.return_code = -1
+                context.result = context.error_message
+                return context
+
+            # Otherwise this is a failure state
+            logger.exit(f"Max attempts {self.max_attempts} reached.", title="Agent Failure")
+
+        self.attempts += 1
+
+        # Trigger again, provide initial context and error message
+        # This is the internal loop running, no manager agent
+        context.result = manifest
+        return self.run_step(context)
 
     def add_build_context(self, context):
         """
@@ -140,7 +142,6 @@ class KubernetesJobAgent(KubernetesAgent):
         """
         Helper to collect error data for a failed job.
         """
-        print(f"[yellow]Gathering diagnostics for failed {obj.kind}...[/yellow]")
         pod_events = []
         pods_description = ""
         if pod is not None:
@@ -212,12 +213,16 @@ class KubernetesJobAgent(KubernetesAgent):
         print("[yellow]Waiting for Job to start... (Timeout: 5 minutes)[/yellow]")
         return self.finish_deploy(context, job, deploy_dir)
 
-    def finish_deploy(self, context, obj, deploy_dir):
+    def finish_deploy(self, context, obj, deploy_dir, callback=None):
         """
         Watch for pod / job object and finish deployment.
         """
         pod = None
-        context.was_oom = False
+
+        def cleanup(callback, obj):
+            obj.delete()
+            if callback is not None:
+                callback()
 
         # This assumes a backoff / retry of 1, so we aren't doing recreation
         # If it fails once, it fails once and for all.
@@ -235,7 +240,7 @@ class KubernetesJobAgent(KubernetesAgent):
             if status.get("failed", 0) > 0:
                 logger.error("Job reports Failed.", title="Job Status")
                 diagnostics = self.get_diagnostics(obj, pod)
-                obj.delete()
+                cleanup(callback, obj)
                 return (
                     1,
                     f"Job entered failed state. This usually happens after repeated pod failures.\n\n{diagnostics}",
@@ -275,12 +280,14 @@ class KubernetesJobAgent(KubernetesAgent):
 
                         # If the pod was OOMKIlled, this shouldn't cycle around as failure during optimization
                         if reason == "OOMKilled" and context.get("is_optimizing"):
+                            print(f"[orange]Pod '{pod.name}' was OOMKilled.[/orange]")
+                            cleanup(callback, obj)
                             return self.optimize(
                                 context, obj, context.result, "The last attempt was OOMKilled."
                             )
 
                         diagnostics = self.get_diagnostics(obj, pod)
-                        obj.delete()
+                        cleanup(callback, obj)
                         return (
                             1,
                             f"Pod '{pod.name}' is stuck in a fatal state: {reason}\n\n{diagnostics}",
@@ -310,6 +317,7 @@ class KubernetesJobAgent(KubernetesAgent):
 
         # This gets hit when the loop is done, so we probably have a timeout
         else:
+            cleanup(callback, obj)
             diagnostics = self.get_diagnostics(obj, pod)
             return (
                 1,
@@ -323,63 +331,70 @@ class KubernetesJobAgent(KubernetesAgent):
         pod.wait_for_ready()
         full_logs, was_timeout = obj.get_logs(context.get("max_runtime"))
         context.was_timeout = was_timeout
-        pod.wait_for_complete()
-        final_status = obj.get_status()
+        final_status = pod.wait_for_complete()
+
+        # Sometimes Kubernetes is racey, allow to complete fully
+        time.sleep(3)
 
         # Save logs regardless of success or not (so we see change)
         self.save_log(full_logs)
         context.was_unsatisfiable = "unsatisfiable" in full_logs
 
         # But did it succeed?
-        print(final_status)
+        to_optimizing = context.get("is_optimizing") is True
+        to_scaling = context.get("scale") is not None and not to_optimizing
+        print(f"To optimizing: {to_optimizing}")
+        print(f"To scaling: {to_scaling}")
 
-        # At this point, we optimize, scale, or just return
-        if context.get("scale") is not None:
-            return self.finish_scale(context, obj, final_status, full_logs)
-        elif context.get('optimize') is not None:
-            return self.finish_optimize(context, obj, final_status, full_logs)
+        # Always get diagnostics in case we need, to cleanly clean up
+        diagnostics = self.get_diagnostics(obj, pod)
+        cleanup(callback, obj)
 
-        if final_status.get("succeeded", 0) > 0:
+        # Success case. Are we still scaling?
+        if final_status == "Succeeded":
             print("\n[green]✅ Job final status is Succeeded.[/green]")
+
+            # We were scaling and optimizing OR just optimizing, keep going
+            if to_optimizing:
+                return self.optimize(context, obj, context.result, full_logs)
+            elif to_scaling:
+                return self.scale(context, obj, full_logs)
+
+        # Failed container issue - try debugging.
+        elif final_status in objects.container_issues:
+            message = f"Container failed with status: {final_status}"
+            # if to_optimizing:
+            #    return self.optimize(context, obj, context.result, message)
+            return 1, message
+
+        elif final_status == "Lost":
+            print("\n[orange]Job was erroneously lost, will retry[/orange]")
+
+            # If we are optimizing, tell the agent that the last attempt failed.
+            if to_optimizing:
+                full_logs = prompts.lost_optimization_message % full_logs
+                return self.optimize(context, obj, context.result, full_logs)
+            return 1, prompts.lost_message % full_logs
+
+        # If we were optimizing and it was too long, return to optimization agent
+        # Or we were optimizing and the resource was unsatisfiable
+        elif (to_optimizing and context.was_timeout) or (
+            to_optimizing and context.was_unsatisfiable
+        ):
+            return self.optimize(context, obj, context.result, full_logs)
+
         else:
             print("\n[red]❌ Job final status is Failed.[/red]")
-            diagnostics = self.get_diagnostics(obj, pod)
-            obj.delete()
+
             # We already have the logs, so we can pass them directly.
             return 1, prompts.failure_message % diagnostics
 
         if context.get("cleanup") is True and os.path.exists(deploy_dir):
             print(f"[dim]Cleaning up temporary deploy directory: {deploy_dir}[/dim]")
-            obj.delete()
             shutil.rmtree(deploy_dir, ignore_errors=True)
 
         # Save full logs for the step
         return 0, full_logs
-
-    def finish_optimize(self, context, obj, final_status, full_logs):
-        """
-        Finish optimizing (which can go through another loop of it)
-        """
-        is_optimizing = context.get("is_optimizating", False)
-        context.was_uneccessful = False
-
-        if final_status.get("succeeded", 0) > 0:
-            print("\n[green]✅ Job final status is Succeeded.[/green]")
-
-            # if we want to optimize, we continue to run until we are instructed not to.
-            # This returns to the calling function, so if it errors after optimize it
-            # will self correct.s
-            return self.optimize(context, obj, context.result, full_logs)
-
-        # If we were optimizing and it was too long, return to optimization agent
-        # The scaling function won't return back here (or will it)
-        elif is_optimizing and context.was_timeout or context.was_unsatisfiable:
-            return self.optimize(context, obj, context.result, full_logs)
-
-        # If we get here, we alert that the last run wasn't successful.
-        elif is_optimizing:
-            context.was_unsuccessful = True
-        return self.optimize(context, obj, context.result, full_logs)
 
     def optimize(self, context, job, job_crd, full_logs):
         """
@@ -416,63 +431,87 @@ class KubernetesJobAgent(KubernetesAgent):
         # Here we add the optimization agent metadata the agent here for saving
         self.optimize_agent.metadata["foms"] = self.optimize_agent.foms
         self.metadata["assets"]["optimize"] = self.optimize_agent.metadata
+        context.is_optimizing = False
         return 0, full_logs
 
-    def finish_scale(self, context, job, job_crd, full_logs):
+    def scale(self, context, job, full_logs):
         """
         Scale the run, optimizing at each size.
 
         This is executed after an initial successful deployment.
         """
-        # tODO: check for current size, get sizes, go up to size
+        # If we haven't cached the sizes
+        extra = ""
+        if "sizes" not in self.metadata["assets"]:
+            self.metadata["assets"]["sizes"] = copy.deepcopy(context.sizes)
+            extra = "This is the first size of a scaling study."
+            context.scaling_attempts = {}
+
+        # If we have no more sizes, we are done
+        if not context.sizes:
+            return 0, full_logs
+
         # Iterate through sizes, and honor order provided
-        sizes = context.get('sizes')
-        context.size = context.get('size') or sizes.pop(0)
+        context.size = context.sizes.pop(0)
         decision = "RETRY"
-        logs = {}
-        while decision != "STOP" and sizes:
+        specs = {}
+        holder = copy.deepcopy(context.optimize)
+        while decision != "STOP":
+
+            # We need to provide the optimization agent with a prompt that includes the size
+            context.optimize = f"You MUST optimize for {context.size} nodes.\n{extra}\n{holder}"
+
+            # After we set this once, we never want to set it again.
+            extra = ""
 
             # This is the final, optimized result for a specific size
-            optimized_logs, _ = self.optimize(context, job, context.result, full_logs)
-            print('PRE SCALING')
-            import IPython 
-            IPython.embed()
+            # This outer loop ensures we exit when optimize is successful
+            return_code = -1
+            while return_code != 0:
+                return_code, final_log = self.optimize(context, job, context.result, full_logs)
 
-            # TODO look at context.optimize_result final, save and add to prompt
-            # We now give this result to the scaling agent, and ask how it wants to proceed.        
+                # If the optimization run resulted in a deployment failure, stop and
+                # return the error code so run_step() can trigger the DebugAgent.
+                if return_code != 0:
+                    context.is_optimizing = False
+
+                    # Add the size back!
+                    context.sizes.insert(0, context.size)
+                    context.optimize = holder
+                    return return_code, final_log
+
+            # Save the result when we exit.
+            best_fom = context.optimize_result.get("best_fom")
+            print(best_fom)
+
+            context.scaling_attempts[context.size] = best_fom
+
+            # Restore the initial optimize prompt
+            context.optimize = holder
+
+            # We now give this result to the scaling agent, and ask how it wants to proceed.
             context = self.scaling_agent.run(context)
-            print('POST SCALING')
-            import IPython 
-            IPython.embed()
+            specs[context.size] = context.scaling_result
             decision = context.scaling_result["decision"]
             print(f"\n[green]✅ Scaling agent decided on {decision}.[/green]")
-            logs[context.size] = optimized_logs
 
             # Uodate to next size
-            if decision == "NEXT" and sizes:
-                context.size = sizes.pop(0)
-            elif decision == "NEXT" and not sizes:
+            if decision == "PROCEED" and context.sizes:
+                context.size = context.sizes.pop(0)
+            elif decision == "PROCEED" and not context.sizes:
                 decision = "STOP"
 
+            # Alert the user
             if decision == "STOP":
                 print(f"\n[dim][x] Stopping scaling.[/dim]")
 
-        # TODO this agent needs to make a prompt that includes the current size, last successful optimization, and context.scale instruction
-        # Also provide last successful FOM and run...
+                # Restore sizes (that have all been popped)
+                context.sizes = self.metadata["assets"]["sizes"]
+                del self.metadata["assets"]["sizes"]
 
-
-        print('TODO need to finish scale...')
-        import IPython 
-        IPython.embed()
-
-
-        # TODO if these are overriddne by each size, save separately when we finish
-        # Agent has decided to return - no more optimize.
-        # TODO: we need to ensure regex can be passed from context (and input)
-        # Here we add the optimization agent metadata the agent here for saving
-        self.optimize_agent.metadata["foms"] = self.optimize_agent.foms
-        self.metadata["assets"]["optimize"] = self.optimize_agent.metadata
-        return 0, logs
+                # Agent has decided to return - no more optimize.
+                self.metadata["assets"]["scaling"] = specs
+        return 0, final_log
 
     def get_containers(self, job_data):
         return job_data.get("spec", {}).get("template", {}).get("spec", {}).get("containers") or []

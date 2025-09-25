@@ -78,7 +78,7 @@ class OptimizationAgent(GeminiAgent):
         return agent
 
     @timed
-    def run(self, context, log, prompt=None, additional=""):
+    def run(self, context, log=None, prompt=None, additional=""):
         """
         Run the optimization agent.
 
@@ -86,7 +86,6 @@ class OptimizationAgent(GeminiAgent):
         """
         # We don't do attempts because we have no condition for success.
         context = get_context(context)
-
         prompt = prompt or context.get("requires")
 
         # If requirements not specified, we require the "optimize" context
@@ -99,8 +98,9 @@ class OptimizationAgent(GeminiAgent):
 
         # Parser requires is the FOM and optimize directive.
         # This returns a list of foms.
-        foms = self.parser.parse(context.optimize, log, context.get("optimize.regex"))
-        self.foms += foms
+        if log is not None:
+            foms = self.parser.parse(context.optimize, log, context.get("optimize.regex"))
+            self.foms += foms
         self.metadata["optimize_attempts"] += 1
 
         # This adds supplementary detail about how to optimize - "keep going until it's good":_
@@ -109,8 +109,6 @@ class OptimizationAgent(GeminiAgent):
             self.metadata["optimize_attempts"],
             json.dumps(self.foms),
         )
-
-        # TODO: if this agent stores memory we don't need to include dockerfile after the first...
         print("Sending optimization prompt to Gemini...")
 
         # Get the updates. We assume that optimization updates for resources
@@ -120,22 +118,25 @@ class OptimizationAgent(GeminiAgent):
         while True:
             content = self.ask_gemini(prompt, with_history=True)
             print("Received optimization from Gemini...")
-            logger.custom(content, title="[green]Result Parser[/green]", border_style="green")
+            logger.custom(content, title="[green]Optimization Agent[/green]", border_style="green")
             try:
                 result = json.loads(self.get_code_block(content, "json"))
                 break
-            except:
-                prompt += "You MUST return the variables back in json"
+            except Exception as e:
+                print(f"Issue parsing optimization result: {e}")
+                prompt += (
+                    "You MUST return the variables back in json, including the nested manifest."
+                )
 
         # This is an invalid result.
         if "decision" not in result or "reason" not in result:
             additional = "The JSON MUST have the fields 'decision', 'reason' at the top level with the manifest."
-            return self.run(context, log, prompt, additional)
+            return self.run(context, prompt=prompt, additional=additional)
 
         # This makes it easier for other agents to identify
-        if result['decision'] == "STOP" and "final" not in result:
+        if result["decision"] == "STOP" and ("final" not in result or "best_fom" not in result):
             additional = "When you STOP you MUST include the 'final' result that is optimized."
-            return self.run(context, log, prompt, additional)
+            return self.run(context, prompt=prompt, additional=additional)
 
         # We can't be sure of the format or how to update, so return to job agent
         self.metadata["assets"]["updates"].append(copy.deepcopy(result))

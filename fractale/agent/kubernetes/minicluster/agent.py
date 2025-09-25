@@ -102,16 +102,24 @@ class MiniClusterAgent(KubernetesJobAgent):
         p = mc.apply(context.result)
         if p.returncode != 0:
             print("[red]'kubectl apply' failed. The manifest is likely invalid.[/red]")
-            return (p.returncode, p.stdout + p.stderr + prompts.get_explain_prompt(self.explain()))
+            fail_message = "For your last attempt, the kubectl apply failed."
+            return (
+                p.returncode,
+                fail_message + p.stdout + p.stderr + prompts.get_explain_prompt(self.explain()),
+            )
 
         print("[green]✅ Manifest applied successfully.[/green]")
 
         # 2. We then need to wait until the job is running or fails
         print("[yellow]Waiting for MiniCluster Job to start... (Timeout: 5 minutes)[/yellow]")
 
+        # Callback to clean up MiniCluster
+        def callback():
+            mc.delete()
+
         # We finish by watching the indexed job
         job = objects.KubernetesJob(name, namespace)
-        rc, message = self.finish_deploy(context, job, deploy_dir)
+        rc, message = self.finish_deploy(context, job, deploy_dir, callback=callback)
 
         # Delete the Minicluster - the job agent doesn't have the handle
         mc.delete()

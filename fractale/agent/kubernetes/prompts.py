@@ -8,6 +8,8 @@ common_instructions = [
     'You MUST NOT add your narration unless it has a "#" prefix to indicate a comment.',
     "Use succinct comments to explain build logic and changes.",
     "This MUST be a final YAML manifest - do NOT ask for customization.",
+    "You MUST use a different name each time to avoid collision. Incrementing a number is fine.",
+    "Do NOT repeat any abstraction names between attempts.",
 ]
 
 common_requires = [

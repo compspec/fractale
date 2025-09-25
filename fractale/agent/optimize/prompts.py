@@ -8,7 +8,7 @@ common_instructions = [
     "You are not allowed to request changes to any configuration beyond the application execution command.",
 ]
 
-optimize_task = f"""Your job is to receive application commands and environments, and make a suggestion for how to improve a metric of interest.
+optimize_task = """Your job is to receive application commands and environments, and make a suggestion for how to improve a metric of interest.
 Here are your instructions:
 
 {{instructions}}
@@ -26,7 +26,7 @@ optimize_instructions = [
 supplement_optimize_prompt = """You also need to decide if the job is worth retrying again. You have made %s attempts and here are the figure of merits as described for those attempts:
 %s
 Please include in your response a "decision" field that is RETRY or STOP. You should keep retrying until you determine the application run is optimized. You MUST add a "reason" field that briefly summarizes the decision.
-When you decide to stop, you MUST include the final, optimized configuration (even if from previous run) in a 'final' field.
+When you decide to stop, you MUST include the final, optimized configuration (even if from previous run) in a 'final' field along with the 'best_fom'.
 """
 
 optimize_prompt = {

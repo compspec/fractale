@@ -10,19 +10,20 @@ plan:
     max_runtime: 300
     allow_return_to_human: false
     allow_return_to_manager: false
-    sizes: [4, 8, 16]
+    sizes: [1, 2, 3, 4]
     scale: |
-      Strong scale lammps for 4, 8, and 16 nodes, maximing the FOM and minimizing running time at each.
-      Stop when you determine the application is no longer strong scaling.
+      Strong scale lammps to maximize the FOM and minimize running time at each size.
+      You MUST choose a problem size at the smallest size (1) that you keep constant.
+      STOP when you determine the application is no longer strong scaling.
     optimize: |
       You MUST maximize the LAMMPS FOM, *atom steps per second.  It could be Matom or katom.
-      You MUST parse a result to include the units for katom or Matom.
-      You MUST choose the largest problem size to maximize FOM. You MAY go up to 4 nodes. 
-      You MUST make an effort to increase problem size as much as you can.
+      You MUST NOT change parameters after the first scaling size (1).
+      You MUST optimize on only ONE node and you MUST increase problem size until timeout.
+      You MUST increase the problem size ONLY at the first scaling size until it stops improving in performance. If a deploy does not run, you must STOP to end the study.
       You MUST set flux.optionFlags to "-o cpu-affinity=per-task"
-      You can use lmp -v x 30 -v y 15 -v z 15 -in ./in.reaxff.hns -nocite to start on 4 nodes (FOM of 2.5 Matom)
-    resources: |
-      The resource spec you got earlier is for an autoscaling cluster, so the nodes possible are not there. You must add the nodeSelector to use node.kubernetes.io/instance-type m7g.16xlarge with 64 CPU, 256 GiB Memory, ARM (Graviton3).
+      At large sizes, you MUST adhere to the same resource limits, requests, and node selectors.
+      You MUST parse a result to include the units for katom or Matom as a single string.
+      You are using the hpc7g.16xlarge, 64 CPU, 128 GiB Memory, ARM (Graviton3)
     testing:
       Run in.reaxff.hns in the pwd with lmp -v x 2 -v y 2 -v z 2 -in ./in.reaxff.hns -nocite for testing only on all processes of one node.
     details: |

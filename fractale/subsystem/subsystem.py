@@ -1,9 +1,10 @@
 import os
 
+from rich import print
+
 import fractale.defaults as defaults
 import fractale.subsystem.solver as solvers
 import fractale.utils as utils
-from fractale.logger import LogColors
 
 
 class SubsystemSolver:
@@ -15,10 +16,14 @@ class SubsystemSolver:
     database or memory graph) are provided.
     """
 
-    def __init__(self, path, backend="database"):
-        self.load_solver(backend, path)
+    def __init__(self, path, backend="database", by_type=None):
+        self.load_solver(backend, path, by_type=by_type)
 
-    def load_solver(self, backend, path):
+        # This is the fractale metadata root with clusters and subsystems
+        # We need to store it to provide to select backends
+        self.root = path
+
+    def load_solver(self, backend, path, by_type=None):
         """
         Load a backend that drives the Solver.
         """
@@ -28,7 +33,7 @@ class SubsystemSolver:
             )
 
         # The subsystem registr
-        self.backend = solvers.load_solver(backend, path)
+        self.backend = solvers.load_solver(backend, path, by_type=by_type)
 
     def render(self, subsystems):
         """
@@ -41,6 +46,19 @@ class SubsystemSolver:
         Determine if a jobspec is satisfied by user-space subsystems.
         """
         return self.backend.satisfied(jobspec, return_results)
+
+    def select(self, clusters, algorithm="random"):
+        """
+        Perform selection based on a chosen algorithm.
+        Ideas:
+
+        2. Random: the default
+        2. Cost: Give the agent the resource specs, ask for lowest cost.
+        3. Time to run: Give the agent queue pending times.
+        """
+        selected = self.backend.select(self.root, clusters, algorithm)
+        print(f'=> Selected cluster(s) "{selected}" using "{algorithm}" algorithm')
+        return selected
 
     def save(self, *args, **kwargs):
         """
@@ -89,9 +107,7 @@ class Subsystem:
         # /home/vanessa/.fractale/clusters/a/spack/graph.json
         # <root>/clusters/<cluster>/<subsystem>/graph.json
         cluster, subsystem = filename.split(os.sep)[-3:-1]
-        print(
-            f'{LogColors.PURPLE}=> 🍇 Loading cluster "{cluster}" subsystem "{subsystem}"{LogColors.ENDC}'
-        )
+        print(f'=> Loading cluster "{cluster}" subsystem "{subsystem}"')
         self.data = utils.read_json(filename)
 
         # The name of the subsystem (not the type). E.g., name "spack" has type "software"

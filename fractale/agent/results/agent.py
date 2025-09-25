@@ -99,11 +99,18 @@ class ResultAgent(GeminiAgent):
         retries = 0
         with_history = True
         attempts = []
+        additional = None
 
         # Keep trying until we at least get a match
         match = None
         while not match:
+
+            # Add additional context
+            if additional is not None:
+                prompt += "\n" + additional
+
             regex = self.ask_gemini(prompt, with_history=with_history)
+            additional = None
 
             # The last appended will be the final (correct)
             attempts.append(regex)
@@ -126,9 +133,9 @@ class ResultAgent(GeminiAgent):
                     self.metadata["assets"]["regex-attempts"] = attempts
                     return regex
                 elif is_correct is None:
-                    prompt += "\n" + input("Please enter feedback for the LLM:\n")
+                    additional = input("Please enter feedback for the LLM:\n")
                 else:
-                    prompt += f"\nHere is a previous attempt that produced a match but was incorrect content: {regex}"
+                    prompt += f"\nHere is a previous attempt that produced a match but was not correct: {regex}"
 
             # Ensure it doesn't make the same mistake...
             else:

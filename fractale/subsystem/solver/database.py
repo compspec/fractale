@@ -3,7 +3,7 @@ import sqlite3
 from rich import print
 
 import fractale.subsystem.queries as queries
-from fractale.logger import LogColors, logger
+from fractale.logger import logger
 
 from .base import Solver
 
@@ -13,11 +13,11 @@ class DatabaseSolver(Solver):
     A database solver solves for a cluster based on a simple database.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, by_type=None):
         self.subsystems = {}
         self.conn = sqlite3.connect(":memory:")
         self.create_tables()
-        self.load(path)
+        self.load(path, by_type)
 
     def __exit__(self):
         self.close()
@@ -153,7 +153,7 @@ class DatabaseSolver(Solver):
             nodes = set()
             i = 0
             for _, values in item.items():
-                for key, value in values.items():
+                for _, value in values.items():
                     # Look for exact match first. IMPORTANT: this is looking just at the subsystem name (E.g., spack) which assumes subsystem names are
                     # unique. We probably want to check for this or add in the subsystem type here
                     statement = f"SELECT * from attributes WHERE cluster = '{cluster}' AND subsystem = '{name}' AND value = '{value}';"

@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -8,7 +9,6 @@ import time
 from rich import print
 
 import fractale.agent.logger as logger
-import fractale.utils as utils
 
 # All the ways a container can go wrong... (upside down smiley face)
 container_issues = [
@@ -38,17 +38,30 @@ class KubernetesAbstraction:
         deploy_dir = tempfile.mkdtemp()
         print(f"[dim]Created temporary deploy context: {deploy_dir}[/dim]")
 
-        # Create handle to object
-        # But ensure we delete any that might exist from before.
-        self.delete()
+        # 2. Ensure any pre-existing object is cleaned up first
+        # Quiet so the output is not confusing.
+        self.delete(quiet=True)
 
-        # Write the manifest to a temporary directory
-        manifest_path = os.path.join(deploy_dir, f"{self.obj}.yaml")
-        utils.write_file(manifest, manifest_path)
-        cmd = ["kubectl", "apply", "-f", manifest_path]
-        p = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=deploy_dir)
-        shutil.rmtree(deploy_dir)
-        return p
+        try:
+            # 3. Write the manifest to a file within the temporary directory
+            manifest_path = os.path.join(deploy_dir, f"{self.obj}.yaml")
+            with open(manifest_path, "w") as f:
+                f.write(manifest)
+
+            # 4. Prepare and log the command
+            cmd = ["kubectl", "apply", "-f", manifest_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, cwd=deploy_dir)
+            print(result.stdout.strip())
+            return result
+
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: `kubectl apply` failed with exit code {e.returncode}.")
+            print(e.stdout.strip())
+            print(e.stderr.strip())
+            return e
+
+        finally:
+            shutil.rmtree(deploy_dir)
 
     def get_events(self):
         """
@@ -103,15 +116,34 @@ class KubernetesAbstraction:
         if info.returncode == 0:
             return json.loads(info.stdout)
 
-    def delete(self):
+    def delete(self, quiet=False):
         """
         Delete object so we can... create again?
         """
-        subprocess.run(
-            ["kubectl", "delete", self.obj, self.name, "-n", self.namespace, "--ignore-not-found"],
-            capture_output=True,
-            check=False,
-        )
+        command = [
+            "kubectl",
+            "delete",
+            self.obj,
+            self.name,
+            "-n",
+            self.namespace,
+            "--ignore-not-found=true",
+            "--wait=true",
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                check=True,
+                text=True,
+                # Max wait 5 minutes
+                timeout=300,
+            )
+            if not quiet:
+                print(f"Successfully deleted {self.obj}/{self.name}.")
+                print(result.stdout)
+        except subprocess.CalledProcessError as e:
+            print(e.stderr)
 
 
 class KubernetesPod(KubernetesAbstraction):
@@ -159,6 +191,8 @@ class KubernetesPod(KubernetesAbstraction):
         pod_status = pod_status or self.get_status()
         container_statuses = pod_status.get("containerStatuses", [])
         for cs in container_statuses:
+
+            # This is a more specific
             if cs.get("state", {}).get("waiting"):
                 reason = cs["state"]["waiting"].get("reason")
                 if reason in container_issues:
@@ -166,36 +200,44 @@ class KubernetesPod(KubernetesAbstraction):
                     logger.error(f"Pod has a fatal container status: {reason}", title="Pod Error")
                     return f"{reason}\nMessage: {message}"
 
+            # A quick check to see if the last state is an error
+            if "terminated" in cs.get("lastState"):
+                exit_code = cs["lastState"]["terminated"].get("exitCode")
+                if exit_code is not None and exit_code != 0:
+                    return cs["lastState"]["terminated"]["reason"]
+
     def wait_for_ready(self, wait_for_completed=False):
         """
         Wait for a pod to be ready.
         """
-        for j in range(self.max_tries):
+        while True:
             pod_status = self.get_status() or {}
             pod_phase = pod_status.get("phase")
+
+            reason = self.has_failed_container(pod_status)
+            if pod_phase == "Running" and reason is not None:
+                return reason
 
             # Let's assume when we are running the pod is ready for logs.
             # If not, we need to check container statuses too.
             if pod_phase == "Running" and not wait_for_completed:
                 print(f"[green]Pod '{self.name}' entered running phase.[/green]")
-                return True
+                return pod_phase
 
             if pod_phase in ["Succeeded", "Failed"]:
-                print(
-                    f"[yellow]Pod '{self.name}' entered terminal phase '{pod_phase}' before logging could start.[/yellow]"
-                )
-                return True
+                print(f"[yellow]Pod '{self.name}' is Completed in phase '{pod_phase}'[/yellow]")
+                return pod_phase
+
+            # This is an unexpected case, but we want it to retry
+            if pod_phase == None:
+                return "Lost"
 
             # If we get here, not ready - sleep and try again.
             print(
-                f"[dim]Pod '{self.name}' has status '{pod_phase}'. Waiting... ({j+1}/{self.max_tries})[/dim]",
+                f"[dim]Pod '{self.name}' has status '{pod_phase}'. Waiting...[/dim]",
                 end="\r",
             )
             time.sleep(3)
-
-        # If we get here, fail and timeout
-        print(f"[red]Pod '{self.name}' never reached running status, state is unknown[/red]")
-        return False
 
     def wait_for_complete(self):
         """

@@ -23,12 +23,12 @@ class GraphSolver(Solver):
     A graph solver solves for a cluster by traversing a graph.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, by_type=None):
         self.subsystems = {}
         self.clusters = set()
         self.vertices = {}
         self.create_graph()
-        self.load(path)
+        self.load(path, by_type)
 
     def create_graph(self):
         """

@@ -151,13 +151,13 @@ def get_optimize_prompt(context, resources):
     if context.get("function"):
         return Prompt(optimize_function_prompt, context).render(
             {
-                "optimize": context.optimize,
+                "optimize": context.get("optimize") or context.get("scale"),
                 "function": context.function,
                 "environment": context.environment,
                 "resources": json.dumps(resources),
                 "was_timeout": context.was_timeout,
                 "was_unsatisfiable": context.was_unsatisfiable,
-                "was_uneccessful": context.was_unsuccessful,
+                "was_unsuccessful": context.get("was_unsuccessful"),
                 "manifest": context.result,
                 "dockerfile": context.get("dockerfile"),
             }
@@ -165,11 +165,11 @@ def get_optimize_prompt(context, resources):
 
     return Prompt(optimize_prompt, context).render(
         {
-            "optimize": context.optimize,
+            "optimize": context.get("optimize") or context.get("scale"),
             # This is a resource spec provided by user (e.g., autoscaling cluster)
             "resources": context.get("resources"),
             "was_timeout": context.was_timeout,
-            "was_uneccessful": context.was_unsuccessful,
+            "was_unsuccessful": context.get("was_unsuccessful"),
             "was_unsatisfiable": context.was_unsatisfiable,
             "environment": context.environment,
             # These are cluster resources found
@@ -208,5 +208,10 @@ meta_bundle = """
 failure_message = """Job failed during execution.
 %s"""
 
-overtime_message = """Job was executing, but went over acceptable time of %s seconds.
-%s"""
+lost_message = """Your last deploy was lost, which is not a failure. Possibly consider other strategies for another attempt.
+%s
+"""
+
+lost_optimization_message = """Your last optimization attempt result was lost, which is not a failure. You MUST discard this attempt and you MUST retry. You MAY consider other strategies for another attempt.
+%s
+"""

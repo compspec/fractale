@@ -1,1 +1,1 @@
-from .agent import OptimizationAgent
+from .agent import ScalingAgent

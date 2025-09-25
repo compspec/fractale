@@ -3,8 +3,8 @@ import os
 import fractale.jobspec as jspec
 import fractale.utils as utils
 from fractale.logger import LogColors, logger
+from fractale.select import get_selector
 from fractale.subsystem.match import MatchSet
-from fractale.subsystem.select import get_selector
 
 
 class Solver:
@@ -47,25 +47,26 @@ class Solver:
             printed = printed[:150] + "..."
         printed = f"{LogColors.OKCYAN}{printed}{LogColors.ENDC}"
         count = (f"{LogColors.PURPLE}({count}){LogColors.ENDC} ").rjust(20)
-        logger.info(count + printed)
+        print(count + printed)
 
-    def assess_containment(self, requires):
+    def assess_containment(self, requirements):
         """
         A rough heuirstic to see if the cluster has enough resources
         of specific types.
         """
-        for typ, count in requires.items():
-            if typ not in self.subsystems.get("containment", {}):
-                self.print_count(f"Count {typ} containment", 0)
-                return False
-            have_count = self.subsystems["containment"][typ]
-            if have_count < count:
+        for requires in requirements:
+            for typ, count in requires.items():
+                if typ not in self.subsystems.get("containment", {}):
+                    self.print_count(f"Count {typ} containment", 0)
+                    return False
+                have_count = self.subsystems["containment"][typ]
+                if have_count < count:
+                    self.print_count(f"SELECT {typ} containment", have_count)
+                    return False
                 self.print_count(f"SELECT {typ} containment", have_count)
-                return False
-            self.print_count(f"SELECT {typ} containment", have_count)
         return True
 
-    def select(self, clusters, algorithm="random"):
+    def select(self, subsystem_root, clusters, algorithm="random"):
         """
         Perform selection based on a chosen algorithm.
         Ideas:
@@ -75,7 +76,7 @@ class Solver:
         3. Time to run: Give the agent queue pending times.
         """
         selector = get_selector(algorithm)
-        return selector.select(clusters)
+        return selector.select(subsystem_root, clusters)
 
     def satisfied(self, jobspec, return_results=False):
         """
@@ -103,16 +104,26 @@ class Solver:
                 print(f"Subsystem '{subsystem_type}' is not known.")
                 return False
 
+            # Special case where we only have containment
+            containment_only = len(subsystems) == 1 and subsystems[0][2] == "containment"
+
             # For each subsystem, since we don't have a query syntax developed, we just look for nodes
             # that have matching attributes. Each here is a tuple, (name, cluster, type)
             for subsystem in subsystems:
                 name, cluster, subsystem_type = subsystem
 
                 # If subsystem is containment and we don't have enough totals, fail
-                if "containment" in self.subsystems:
-                    if not self.assess_containment(requires["containment"]):
+                if name == "containment":
+                    if not self.assess_containment(items):
                         print(f"{LogColors.RED}=> No Matches due to containment{LogColors.ENDC}")
                         return False
+
+                # Containment subsystem has different check, above
+                # If we make it here, we matched.
+                if name == "containment":
+                    if containment_only:
+                        matches.add(cluster, name, items, items)
+                    continue
 
                 # "Get nodes in subsystem X" if we have a query syntax we could limit to a type, etc.
                 # In this case, the subsystem is the name (e.g., spack) since we might have multiple for
@@ -138,7 +149,7 @@ class Solver:
                 print(f"{LogColors.RED}=> No Matches{LogColors.ENDC}")
             return False
 
-    def load(self, path):
+    def load(self, path, by_type=None):
         """
         Load a group of subsystem files, typically json JGF.
 
@@ -151,10 +162,16 @@ class Solver:
 
         if not os.path.exists(path):
             raise ValueError(f"User subsystem directory {path} does not exist.")
+
+        # TODO: we also need to eventually support graphs.json
         files = utils.recursive_find(path, "graph[.]json")
         if not files:
             raise ValueError(f"There are no cluster subsystems defined under root {path}")
         for filename in files:
             new_subsystem = Subsystem(filename)
+
+            # Skip this subsystem, not desired type
+            if by_type is not None and by_type != new_subsystem.type:
+                continue
             self.load_subsystem(new_subsystem)
             self.metadata[new_subsystem.name] = new_subsystem.metadata

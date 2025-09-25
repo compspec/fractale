@@ -1,0 +1,34 @@
+name: Scaling Study for LAMMPS
+description: Scale lammps up tp 4 nodes.
+plan:
+
+- agent: minicluster
+  context:
+    environment: "AWS CPU instance in Kubernetes" 
+    container: ghcr.io/converged-computing/fractale-agent-experiments:lammps-reax
+    max_attempts: 10
+    max_runtime: 300
+    allow_return_to_human: false
+    allow_return_to_manager: false
+    sizes: [4, 8, 16]
+    scale: |
+      Strong scale lammps for 4, 8, and 16 nodes, maximing the FOM and minimizing running time at each.
+      Stop when you determine the application is no longer strong scaling.
+    optimize: |
+      You MUST maximize the LAMMPS FOM, *atom steps per second.  It could be Matom or katom.
+      You MUST parse a result to include the units for katom or Matom.
+      You MUST choose the largest problem size to maximize FOM. You MAY go up to 4 nodes. 
+      You MUST make an effort to increase problem size as much as you can.
+      You MUST set flux.optionFlags to "-o cpu-affinity=per-task"
+      You can use lmp -v x 30 -v y 15 -v z 15 -in ./in.reaxff.hns -nocite to start on 4 nodes (FOM of 2.5 Matom)
+    resources: |
+      The resource spec you got earlier is for an autoscaling cluster, so the nodes possible are not there. You must add the nodeSelector to use node.kubernetes.io/instance-type m7g.16xlarge with 64 CPU, 256 GiB Memory, ARM (Graviton3).
+    testing:
+      Run in.reaxff.hns in the pwd with lmp -v x 2 -v y 2 -v z 2 -in ./in.reaxff.hns -nocite for testing only on all processes of one node.
+    details: |
+      You MUST set flux.container.disable to true.
+      You MUST set the containers imagePullPolicy to Always.
+      The Flux Operator uses flux run in the pwd with the tasks determined by the spec.tasks.
+      You MUST set resource requests and limits to use vpc.amazonaws.com/efa: 1
+      Since this is an ARM instance you MUST change the flux.container.image to be
+      ghcr.io/converged-computing/flux-view-ubuntu:arm-jammy and set flux.arch: "arm".

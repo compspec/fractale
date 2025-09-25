@@ -18,6 +18,7 @@ from fractale.agent.decorators import timed
 from fractale.agent.errors import DebugAgent
 from fractale.agent.kubernetes.base import KubernetesAgent
 from fractale.agent.optimize import OptimizationAgent
+from fractale.agent.scaling import ScalingAgent
 
 
 class KubernetesJobAgent(KubernetesAgent):
@@ -31,10 +32,11 @@ class KubernetesJobAgent(KubernetesAgent):
 
     def __init__(self, *args, **kwargs):
         """
-        Add the optimization agent, even if we don't need it.
+        Add the optimization and scaling agents, even if we don't need it.
         """
         super().__init__(*args, **kwargs)
         self.optimize_agent = OptimizationAgent()
+        self.scaling_agent = ScalingAgent()
 
     def get_prompt(self, context):
         """
@@ -48,6 +50,24 @@ class KubernetesJobAgent(KubernetesAgent):
             prompt = prompts.get_generate_prompt(context)
         return prompt
 
+    def validate(self, context):
+        """
+        Validation for the context.
+        """
+        # We can't optimize and scale (scaling does optimization)
+        if context.get('scale') is not None and context.get('optimize') is not None:
+            raise ValueError("Only one of 'scale' and 'optimize' is allowed")
+
+        # If we are requesting a scale, we need the sizes.
+        if context.get('scale') is not None:
+            sizes = context.get('sizes')
+            if not sizes:
+                raise ValueError("The 'sizes' field is required in context to scale.")
+            if not isinstance(sizes, list):
+                raise ValueError("The 'sizes' field must be a list")
+            if any([not isinstance(x, int) for x in sizes]):
+                raise ValueError("Each entry in 'sizes' must be an integer")
+
     @timed
     def run_step(self, context):
         """
@@ -55,6 +75,7 @@ class KubernetesJobAgent(KubernetesAgent):
         """
         # These are required, context file is not (but recommended)
         context = self.add_build_context(context)
+        self.validate(context)
 
         # This will either generate fresh or rebuild erroneous Job
         manifest = self.generate_manifest(context)
@@ -312,23 +333,14 @@ class KubernetesJobAgent(KubernetesAgent):
         # But did it succeed?
         print(final_status)
 
+        # At this point, we optimize, scale, or just return
+        if context.get("scale") is not None:
+            return self.finish_scale(context, obj, final_status, full_logs)
+        elif context.get('optimize') is not None:
+            return self.finish_optimize(context, obj, final_status, full_logs)
+
         if final_status.get("succeeded", 0) > 0:
             print("\n[green]✅ Job final status is Succeeded.[/green]")
-
-            # if we want to optimize, we continue to run until we are instructed not to.
-            # This returns to the calling function, so if it errors after optimize it
-            # will self correct.s
-            if context.get("optimize") is not None:
-                return self.optimize(context, obj, context.result, full_logs)
-
-        # If we were optimizing and it was too long, return to optimization agent
-        elif context.get("is_optimizing") is True and context.was_timeout:
-            return self.optimize(context, obj, context.result, full_logs)
-
-        # We were optimizing and the resource was unsatisfiable
-        elif context.get("is_optimizing") is True and context.was_unsatisfiable:
-            return self.optimize(context, obj, context.result, full_logs)
-
         else:
             print("\n[red]❌ Job final status is Failed.[/red]")
             diagnostics = self.get_diagnostics(obj, pod)
@@ -343,6 +355,31 @@ class KubernetesJobAgent(KubernetesAgent):
 
         # Save full logs for the step
         return 0, full_logs
+
+    def finish_optimize(self, context, obj, final_status, full_logs):
+        """
+        Finish optimizing (which can go through another loop of it)
+        """
+        is_optimizing = context.get("is_optimizating", False)
+        context.was_uneccessful = False
+
+        if final_status.get("succeeded", 0) > 0:
+            print("\n[green]✅ Job final status is Succeeded.[/green]")
+
+            # if we want to optimize, we continue to run until we are instructed not to.
+            # This returns to the calling function, so if it errors after optimize it
+            # will self correct.s
+            return self.optimize(context, obj, context.result, full_logs)
+
+        # If we were optimizing and it was too long, return to optimization agent
+        # The scaling function won't return back here (or will it)
+        elif is_optimizing and context.was_timeout or context.was_unsatisfiable:
+            return self.optimize(context, obj, context.result, full_logs)
+
+        # If we get here, we alert that the last run wasn't successful.
+        elif is_optimizing:
+            context.was_unsuccessful = True
+        return self.optimize(context, obj, context.result, full_logs)
 
     def optimize(self, context, job, job_crd, full_logs):
         """
@@ -359,6 +396,7 @@ class KubernetesJobAgent(KubernetesAgent):
 
         # The agent calling the optimize agent decides what metadata to present.
         # This is how this agent will work for cloud vs. bare metal
+        # This first prompt provides resources.
         context.requires = prompts.get_optimize_prompt(context, resources)
         context = self.optimize_agent.run(context, full_logs)
 
@@ -379,6 +417,62 @@ class KubernetesJobAgent(KubernetesAgent):
         self.optimize_agent.metadata["foms"] = self.optimize_agent.foms
         self.metadata["assets"]["optimize"] = self.optimize_agent.metadata
         return 0, full_logs
+
+    def finish_scale(self, context, job, job_crd, full_logs):
+        """
+        Scale the run, optimizing at each size.
+
+        This is executed after an initial successful deployment.
+        """
+        # tODO: check for current size, get sizes, go up to size
+        # Iterate through sizes, and honor order provided
+        sizes = context.get('sizes')
+        context.size = context.get('size') or sizes.pop(0)
+        decision = "RETRY"
+        logs = {}
+        while decision != "STOP" and sizes:
+
+            # This is the final, optimized result for a specific size
+            optimized_logs, _ = self.optimize(context, job, context.result, full_logs)
+            print('PRE SCALING')
+            import IPython 
+            IPython.embed()
+
+            # TODO look at context.optimize_result final, save and add to prompt
+            # We now give this result to the scaling agent, and ask how it wants to proceed.        
+            context = self.scaling_agent.run(context)
+            print('POST SCALING')
+            import IPython 
+            IPython.embed()
+            decision = context.scaling_result["decision"]
+            print(f"\n[green]✅ Scaling agent decided on {decision}.[/green]")
+            logs[context.size] = optimized_logs
+
+            # Uodate to next size
+            if decision == "NEXT" and sizes:
+                context.size = sizes.pop(0)
+            elif decision == "NEXT" and not sizes:
+                decision = "STOP"
+
+            if decision == "STOP":
+                print(f"\n[dim][x] Stopping scaling.[/dim]")
+
+        # TODO this agent needs to make a prompt that includes the current size, last successful optimization, and context.scale instruction
+        # Also provide last successful FOM and run...
+
+
+        print('TODO need to finish scale...')
+        import IPython 
+        IPython.embed()
+
+
+        # TODO if these are overriddne by each size, save separately when we finish
+        # Agent has decided to return - no more optimize.
+        # TODO: we need to ensure regex can be passed from context (and input)
+        # Here we add the optimization agent metadata the agent here for saving
+        self.optimize_agent.metadata["foms"] = self.optimize_agent.foms
+        self.metadata["assets"]["optimize"] = self.optimize_agent.metadata
+        return 0, logs
 
     def get_containers(self, job_data):
         return job_data.get("spec", {}).get("template", {}).get("spec", {}).get("containers") or []

@@ -26,7 +26,7 @@ optimize_instructions = [
 supplement_optimize_prompt = """You also need to decide if the job is worth retrying again. You have made %s attempts and here are the figure of merits as described for those attempts:
 %s
 Please include in your response a "decision" field that is RETRY or STOP. You should keep retrying until you determine the application run is optimized. You MUST add a "reason" field that briefly summarizes the decision.
-When you decide to stop, you MUST include the final, optimized configuration (even if from previous run).
+When you decide to stop, you MUST include the final, optimized configuration (even if from previous run) in a 'final' field.
 """
 
 optimize_prompt = {

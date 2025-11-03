@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 
 import argparse
+import json
 import sys
 
+import yaml
+from flux.job.Jobspec import validate_jobspec
 from rich import box
 from rich.console import Console
 from rich.padding import Padding
@@ -48,10 +51,17 @@ def get_parser():
         description="validate flux batch script",
     )
     validate.add_argument("path", help="path to batch.sh to validate")
+
+    count = subparsers.add_parser(
+        "count",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="count resources in flux batch script",
+    )
+    count.add_argument("path", help="path to batch.yaml to count resources")
     return parser
 
 
-def run_validate():
+def run_command():
     parser = get_parser()
     if len(sys.argv) == 1:
         help()
@@ -62,22 +72,49 @@ def run_validate():
     # Here we can assume instantiated to get args
     if args.command == "validate":
         return validate(args.path)
+    elif args.command == "count":
+        return count_resources(args.path)
     raise ValueError(f"The command {args.command} is not known")
 
 
 def validate(path):
     """
-    Validate the path to a batch.sh or similar.
+    Validate a batch.sh, jobspec.yaml, or jobspec.json.
     """
-    validator = Validator("batch")
+    jobspec = None
     content = utils.read_file(path)
-    try:
-        # Setting fail fast to False means we will get ALL errors at once
-        validator.validate(path, fail_fast=False)
-    except Exception as e:
-        display_error(content, str(e))
-        sys.exit(1)
+    yaml_content = yaml.safe_load(content)
+    json_content = json.dumps(yaml_content)
+    if not isinstance(yaml_content, dict):
+        validator = Validator("batch")
+        try:
+            # Setting fail fast to False means we will get ALL errors at once
+            validator.validate(path, fail_fast=False)
+        except Exception as e:
+            display_error(content, str(e))
+            sys.exit(1)
+    else:
+        try:
+            jobspec = validate_jobspec(json_content)
+        except Exception as e:
+            display_error(content, str(e))
+            sys.exit(1)
+    return jobspec
+
+
+def count_resources(path):
+    """
+    Count the resources in a jobspec.yaml or similar.
+    """
+    jobspec = validate(path)
+    if jobspec is not None:
+        print(
+            "The jobspec is valid! Here are the total resource"
+            " counts per type requested by the provided jobspec:"
+        )
+        for res in jobspec[1].resource_walk():
+            print(f"Type: {res[1]['type']}, count: {res[2]}")
 
 
 if __name__ == "__main__":
-    run_validate()
+    run_command()
